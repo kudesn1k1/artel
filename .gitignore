@@ -1,0 +1,11 @@
+# Local tooling / working notes — not shared in the repo
+.claude/
+docs/
+
+# IDE
+.idea/
+
+# Go build & test artifacts
+*.exe
+*.test
+*.out
