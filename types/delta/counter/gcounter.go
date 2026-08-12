@@ -52,6 +52,10 @@ func (s GCounterState) Join(other GCounterState) GCounterState {
 	return GCounterState{out}
 }
 
+func (g *GCounter) ID() string {
+	return g.id
+}
+
 func (g *GCounter) Merge(other GCounterState) {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()

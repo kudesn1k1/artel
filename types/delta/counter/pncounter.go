@@ -75,6 +75,10 @@ func (s PNCounterState) Join(other PNCounterState) PNCounterState {
 	return out
 }
 
+func (p *PNCounter) ID() string {
+	return p.id
+}
+
 func (p *PNCounter) Merge(other PNCounterState) {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
