@@ -24,4 +24,5 @@ type DeltaReplica[S DeltaState[S]] interface {
 
 type DeltaState[S any] interface {
 	Join(S) S
+	IsEmpty() bool
 }

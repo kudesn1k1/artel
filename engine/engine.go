@@ -82,6 +82,7 @@ func (e *Engine[S, R]) Start(interval time.Duration) error {
 
 					binary, err := job.snapshot.MarshalBinary()
 					if err != nil {
+						//TODO: return state to pending to try to re-send in the next round
 						e.log.Error("failed to marshal payload", "err", err)
 						continue
 					}
@@ -115,6 +116,8 @@ func (e *Engine[S, R]) Stop() error {
 	e.stopOnce.Do(func() {
 		close(e.done)
 	})
+	//TODO: consider returning pending jobs to buffer
+	e.wg.Wait()
 
 	if err := e.transport.Close(); err != nil {
 		return err
@@ -141,6 +144,10 @@ func (e *Engine[S, R]) round() {
 	for _, p := range peers {
 		sent := e.pending[p].Join(freshDelta)
 
+		if sent.IsEmpty() {
+			continue
+		}
+
 		jobs = append(jobs, sendJob[S]{
 			peerId:   p,
 			snapshot: sent,
@@ -149,7 +156,7 @@ func (e *Engine[S, R]) round() {
 		e.pending[p] = *new(S)
 	}
 	e.mutex.Unlock()
-
+	//TODO: if channel is full - return deltas to pending to catch up in later rounds
 	for _, job := range jobs {
 		e.sendJobs <- job
 	}

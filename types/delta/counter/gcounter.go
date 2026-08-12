@@ -20,6 +20,10 @@ type GCounterState struct {
 	values map[string]uint64
 }
 
+func (s GCounterState) IsEmpty() bool {
+	return len(s.values) == 0
+}
+
 func (s GCounterState) MarshalBinary() (data []byte, err error) {
 	return json.Marshal(s.values)
 }

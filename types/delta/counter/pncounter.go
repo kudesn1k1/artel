@@ -21,6 +21,10 @@ type PNCounterState struct {
 	dec map[string]uint64
 }
 
+func (s PNCounterState) IsEmpty() bool {
+	return len(s.inc) == 0 && len(s.dec) == 0
+}
+
 var _ encoding.BinaryMarshaler = PNCounterState{}
 var _ encoding.BinaryUnmarshaler = (*PNCounterState)(nil)
 
