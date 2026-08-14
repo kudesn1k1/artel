@@ -205,6 +205,30 @@ func TestEngineAnswersPullWithFullState(t *testing.T) {
 	}
 }
 
+// A Pull that could not be handed to the workers — the queue was full when its
+// round ran — must be retried, not dropped. A peer that never receives a Pull
+// never answers with its full state, and nothing else will ever ship us another
+// replica's keys: deltas only carry keys their sender mutated.
+func TestEnginePullSurvivesAFullSendQueue(t *testing.T) {
+	tr := newManyPeers(150) // 150 peers vs a 100-slot queue: one round cannot cover them all
+	e := NewEngine(counter.NewGCounter("A"), tr, decodeGCounter)
+	t.Cleanup(func() { _ = e.Stop() })
+
+	if err := e.Start(tick); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	deadline := time.Now().Add(waitDeadline)
+	for time.Now().Before(deadline) {
+		if tr.pulledCount() == len(tr.ids) {
+			return
+		}
+		time.Sleep(tick / 2)
+	}
+	t.Fatalf("only %d of %d peers ever received a Pull: the ones that did not fit in the queue were dropped",
+		tr.pulledCount(), len(tr.ids))
+}
+
 // --- lifecycle ---------------------------------------------------------------
 
 func TestEngineStop(t *testing.T) {
@@ -226,13 +250,8 @@ func TestEngineStop(t *testing.T) {
 	// buffers, so a round parked forever on the queue leaks a goroutine AND
 	// silently drops those deltas.
 	t.Run("releases a round blocked on a full send queue", func(t *testing.T) {
-		peers := make([]string, 150) // more than the send queue can hold
-		for i := range peers {
-			peers[i] = fmt.Sprintf("peer-%d", i)
-		}
-
 		// Workers are deliberately not started — nothing drains the queue.
-		e := NewEngine(counter.NewGCounter("A"), &manyPeers{ids: peers}, decodeGCounter)
+		e := NewEngine(counter.NewGCounter("A"), newManyPeers(150), decodeGCounter)
 
 		returned := make(chan struct{})
 		go func() {

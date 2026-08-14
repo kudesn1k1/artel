@@ -15,22 +15,27 @@ type State[S any] interface {
 	encoding.BinaryMarshaler
 }
 
-type sendJob[S State[S]] struct {
+type pushJob[S State[S]] struct {
 	peerId   string
 	snapshot S
 }
 
+type pullJob string
+
 const workerCount = 4
 
+// TODO: add work with context
 type Engine[S State[S], R crdt.DeltaReplica[S]] struct {
 	local     R
 	transport transport.Transport
 	pending   map[string]S // per-peer delta buffer
+	needsPull map[string]struct{}
 	decode    func([]byte) (S, error)
 	mutex     sync.Mutex
 	done      chan struct{}
 	ticker    *time.Ticker
-	sendJobs  chan sendJob[S]
+	pushJobs  chan pushJob[S]
+	pullJobs  chan pullJob
 	wg        sync.WaitGroup
 	log       *slog.Logger
 	stopOnce  sync.Once
@@ -41,16 +46,27 @@ func NewEngine[S State[S], R crdt.DeltaReplica[S]](local R, transport transport.
 		local:     local,
 		transport: transport,
 		pending:   make(map[string]S),
+		needsPull: make(map[string]struct{}),
 		decode:    decode,
 		done:      make(chan struct{}),
-		sendJobs:  make(chan sendJob[S], 100), // TODO: review send jobs count
+		pushJobs:  make(chan pushJob[S], 100), // TODO: review send jobs count
+		pullJobs:  make(chan pullJob, 100),    // TODO: review send jobs count
 		log:       slog.Default(),
 	}
 }
 
 func (e *Engine[S, R]) Serve() error {
-	//TODO: pull fresh state from known peers
-	return e.transport.Serve(e.consume)
+	if err := e.transport.Serve(e.consume); err != nil {
+		return err
+	}
+
+	e.mutex.Lock()
+	for _, peer := range e.transport.Peers() {
+		e.needsPull[peer] = struct{}{}
+	}
+	e.mutex.Unlock()
+
+	return nil
 }
 
 func (e *Engine[S, R]) Start(interval time.Duration) error {
@@ -70,40 +86,10 @@ func (e *Engine[S, R]) Start(interval time.Duration) error {
 	}()
 
 	for range workerCount {
-		e.wg.Go(func() {
-			for {
-				select {
-				case <-e.done:
-					return
-				case job, ok := <-e.sendJobs:
-					if !ok {
-						return
-					}
-
-					binary, err := job.snapshot.MarshalBinary()
-					if err != nil {
-						//TODO: return state to pending to try to re-send in the next round
-						e.log.Error("failed to marshal payload", "err", err)
-						continue
-					}
-
-					msg := transport.Message{
-						From:    e.local.ID(),
-						Kind:    transport.Push,
-						Payload: binary,
-					}
-
-					if err := e.transport.Send(job.peerId, msg); err != nil {
-						e.log.Error("failed to send job", "peer", job.peerId, "err", err)
-						e.mutex.Lock()
-						e.pending[job.peerId] = e.pending[job.peerId].Join(job.snapshot)
-						e.mutex.Unlock()
-						continue
-					}
-				}
-			}
-		})
+		e.wg.Go(e.sendLoop)
 	}
+
+	e.round()
 
 	return nil
 }
@@ -126,6 +112,10 @@ func (e *Engine[S, R]) Stop() error {
 }
 
 func (e *Engine[S, R]) consume(m transport.Message) error {
+	if m.Kind == transport.Pull {
+		return e.sendFullState(m.From)
+	}
+
 	state, err := e.decode(m.Payload)
 	if err != nil {
 		return fmt.Errorf("decoding message: %w", err)
@@ -138,27 +128,108 @@ func (e *Engine[S, R]) consume(m transport.Message) error {
 func (e *Engine[S, R]) round() {
 	freshDelta := e.local.FlushDelta()
 	peers := e.transport.Peers()
-	jobs := make([]sendJob[S], 0, len(peers))
+	pushJobs := make([]pushJob[S], 0, len(peers))
+	pullJobs := make([]pullJob, 0, len(peers))
 
 	e.mutex.Lock()
 	for _, p := range peers {
-		sent := e.pending[p].Join(freshDelta)
+		if _, ok := e.needsPull[p]; ok {
+			pullJobs = append(pullJobs, pullJob(p))
+		}
 
-		if sent.IsEmpty() {
+		push := e.pending[p].Join(freshDelta)
+
+		if push.IsBottom() {
 			continue
 		}
 
-		jobs = append(jobs, sendJob[S]{
+		pushJobs = append(pushJobs, pushJob[S]{
 			peerId:   p,
-			snapshot: sent,
+			snapshot: push,
 		})
 
 		e.pending[p] = *new(S)
 	}
 	e.mutex.Unlock()
-	//TODO: if channel is full - return deltas to pending to catch up in later rounds
-	for _, job := range jobs {
-		e.sendJobs <- job
+
+	var toReturn []pushJob[S]
+	for _, job := range pushJobs {
+		select {
+		case e.pushJobs <- job:
+		default:
+			toReturn = append(toReturn, job)
+		}
 	}
 
+	for _, job := range pullJobs {
+		select {
+		case e.pullJobs <- job:
+		default:
+		}
+	}
+
+	e.mutex.Lock()
+	for _, job := range toReturn {
+		e.pending[job.peerId] = e.pending[job.peerId].Join(job.snapshot)
+	}
+	e.mutex.Unlock()
+
+}
+
+func (e *Engine[S, R]) sendFullState(peerID string) error {
+	binary, err := e.local.State().MarshalBinary()
+	if err != nil {
+		return err // not wrapping the error cause call stack show the problem origin, no need to wrap here
+	}
+
+	message := transport.Message{
+		From:    e.transport.ID(),
+		Kind:    transport.Push,
+		Payload: binary,
+	}
+	return e.transport.Send(peerID, message)
+}
+
+func (e *Engine[S, R]) sendLoop() {
+	for {
+		select {
+		case <-e.done:
+			return
+		case job := <-e.pushJobs:
+			binary, err := job.snapshot.MarshalBinary()
+			if err != nil {
+				//TODO: return state to pending to try to re-send in the next round
+				e.log.Error("failed to marshal payload", "err", err)
+				continue
+			}
+
+			msg := transport.Message{
+				From:    e.transport.ID(),
+				Kind:    transport.Push,
+				Payload: binary,
+			}
+
+			if err := e.transport.Send(job.peerId, msg); err != nil {
+				e.log.Error("failed to send push job", "peer", job.peerId, "err", err)
+				e.mutex.Lock()
+				e.pending[job.peerId] = e.pending[job.peerId].Join(job.snapshot)
+				e.mutex.Unlock()
+				continue
+			}
+		case job := <-e.pullJobs:
+			msg := transport.Message{
+				From: e.transport.ID(),
+				Kind: transport.Pull,
+			}
+
+			if err := e.transport.Send(string(job), msg); err != nil {
+				e.log.Error("failed to send pull job", "peer", job, "err", err)
+				continue
+			}
+
+			e.mutex.Lock()
+			delete(e.needsPull, string(job))
+			e.mutex.Unlock()
+		}
+	}
 }

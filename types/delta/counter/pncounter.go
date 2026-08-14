@@ -21,7 +21,7 @@ type PNCounterState struct {
 	dec map[string]uint64
 }
 
-func (s PNCounterState) IsEmpty() bool {
+func (s PNCounterState) IsBottom() bool {
 	return len(s.inc) == 0 && len(s.dec) == 0
 }
 
@@ -77,10 +77,6 @@ func (s PNCounterState) Join(other PNCounterState) PNCounterState {
 	}
 
 	return out
-}
-
-func (p *PNCounter) ID() string {
-	return p.id
 }
 
 func (p *PNCounter) Merge(other PNCounterState) {

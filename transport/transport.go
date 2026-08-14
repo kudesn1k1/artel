@@ -42,6 +42,8 @@ type Transport interface {
 	// be handed off (unknown peer, network failure).
 	Send(peerID string, m Message) error
 
+	ID() string
+
 	// Peers lists the ids this node gossips to.
 	Peers() []string
 

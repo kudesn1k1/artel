@@ -120,15 +120,42 @@ func (f *flakyLink) waitForAttemptsAfter(t *testing.T, baseline int64) {
 	})
 }
 
-// manyPeers reports more peers than the engine's send queue can hold. Its Send
-// is never reached: tests using it do not start the workers, so round() is
-// forced to block trying to enqueue.
-type manyPeers struct{ ids []string }
+// manyPeers reports more peers than the engine's send queue can hold, so a
+// single round cannot possibly enqueue a job for every peer.
+type manyPeers struct {
+	ids    []string
+	mu     sync.Mutex
+	pulled map[string]struct{}
+}
 
-func (m *manyPeers) Send(string, transport.Message) error { return nil }
-func (m *manyPeers) Peers() []string                      { return m.ids }
-func (m *manyPeers) Serve(transport.Handler) error        { return nil }
-func (m *manyPeers) Close() error                         { return nil }
+func newManyPeers(n int) *manyPeers {
+	ids := make([]string, n)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("peer-%d", i)
+	}
+	return &manyPeers{ids: ids, pulled: make(map[string]struct{})}
+}
+
+// Send always succeeds; the Pulls that made it out are recorded.
+func (m *manyPeers) Send(peerID string, msg transport.Message) error {
+	if msg.Kind == transport.Pull {
+		m.mu.Lock()
+		m.pulled[peerID] = struct{}{}
+		m.mu.Unlock()
+	}
+	return nil
+}
+
+func (m *manyPeers) pulledCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.pulled)
+}
+
+func (m *manyPeers) ID() string                    { return "many_peers" }
+func (m *manyPeers) Peers() []string               { return m.ids }
+func (m *manyPeers) Serve(transport.Handler) error { return nil }
+func (m *manyPeers) Close() error                  { return nil }
 
 // probe is a bare registry participant — no engine — used to speak the wire
 // protocol directly: send a raw Message and record what comes back.

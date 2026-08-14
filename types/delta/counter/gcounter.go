@@ -20,7 +20,7 @@ type GCounterState struct {
 	values map[string]uint64
 }
 
-func (s GCounterState) IsEmpty() bool {
+func (s GCounterState) IsBottom() bool {
 	return len(s.values) == 0
 }
 
@@ -54,10 +54,6 @@ func (s GCounterState) Join(other GCounterState) GCounterState {
 		out[k] = max(s.values[k], v)
 	}
 	return GCounterState{out}
-}
-
-func (g *GCounter) ID() string {
-	return g.id
 }
 
 func (g *GCounter) Merge(other GCounterState) {

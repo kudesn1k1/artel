@@ -50,6 +50,10 @@ func NewInProcess(id string, peers []string, reg *Registry) *InProcess {
 	return &InProcess{id: id, peers: peers, reg: reg}
 }
 
+func (i *InProcess) ID() string {
+	return i.id
+}
+
 func (t *InProcess) Send(peerID string, m Message) error { return t.reg.deliver(peerID, m) }
 
 func (t *InProcess) Peers() []string { return t.peers }

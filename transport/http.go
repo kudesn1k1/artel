@@ -39,6 +39,10 @@ func NewHTTP(id, addr string, peers map[string]string) *HTTP {
 	}
 }
 
+func (h *HTTP) ID() string {
+	return h.id
+}
+
 func (t *HTTP) Send(peerID string, m Message) error {
 	base, ok := t.peers[peerID]
 	if !ok {

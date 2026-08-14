@@ -10,7 +10,6 @@ package crdt
 type DeltaReplica[S DeltaState[S]] interface {
 	StateReplica[S]
 
-	ID() string
 	// Delta returns the accumulated delta-group to disseminate: the join of
 	// every delta-mutation applied since the last ResetDelta. It is an S, not a
 	// list — successive mutations are joined into it (Algorithm 1: Di = Di ⊔ d),
@@ -24,5 +23,7 @@ type DeltaReplica[S DeltaState[S]] interface {
 
 type DeltaState[S any] interface {
 	Join(S) S
-	IsEmpty() bool
+
+	// IsBottom indicates whether the element is the bottom element of the join-semilattice
+	IsBottom() bool
 }
