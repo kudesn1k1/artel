@@ -20,16 +20,9 @@ type pushJob[S State[S]] struct {
 	snapshot S
 }
 
-type peerOutbox[S State[S]] struct {
-	pending      S
-	needsPull    bool
-	pushInFlight bool
-	pullInFlight bool // TODO: try to refactor to not track each kind of requests independently
-}
-
 type pullJob string
 
-const workerCount = 4
+const workerCount = 8
 
 // TODO: add work with context
 type Engine[S State[S], R crdt.DeltaReplica[S]] struct {
@@ -37,7 +30,6 @@ type Engine[S State[S], R crdt.DeltaReplica[S]] struct {
 	transport transport.Transport
 	peers     map[string]*peerOutbox[S]
 	decode    func([]byte) (S, error)
-	mutex     sync.Mutex
 	done      chan struct{}
 	ticker    *time.Ticker
 	pushJobs  chan pushJob[S]
@@ -71,11 +63,9 @@ func (e *Engine[S, R]) Serve() error {
 		return err
 	}
 
-	e.mutex.Lock()
 	for _, peer := range e.transport.Peers() {
-		e.peers[peer].needsPull = true
+		e.peers[peer].markNeedsPull()
 	}
-	e.mutex.Unlock()
 
 	return nil
 }
@@ -142,33 +132,18 @@ func (e *Engine[S, R]) round() {
 	pushJobs := make([]pushJob[S], 0, len(peers))
 	pullJobs := make([]pullJob, 0, len(peers))
 
-	e.mutex.Lock()
 	for _, p := range peers {
-		if e.peers[p].needsPull && !e.peers[p].pullInFlight {
-			e.peers[p].pullInFlight = true
+		if e.peers[p].takePull() {
 			pullJobs = append(pullJobs, pullJob(p))
 		}
 
-		push := e.peers[p].pending.Join(freshDelta)
-
-		if push.IsBottom() {
-			continue
+		if push, shouldSend := e.peers[p].takePush(freshDelta); shouldSend {
+			pushJobs = append(pushJobs, pushJob[S]{
+				peerId:   p,
+				snapshot: push,
+			})
 		}
-
-		if e.peers[p].pushInFlight {
-			e.peers[p].pending = push
-			continue
-		}
-
-		e.peers[p].pushInFlight = true
-		pushJobs = append(pushJobs, pushJob[S]{
-			peerId:   p,
-			snapshot: push,
-		})
-
-		e.peers[p].pending = *new(S)
 	}
-	e.mutex.Unlock()
 
 	var pushesToReturn []pushJob[S]
 	var pullsToReturn []pullJob
@@ -179,7 +154,6 @@ func (e *Engine[S, R]) round() {
 			pushesToReturn = append(pushesToReturn, job)
 		}
 	}
-
 	for _, job := range pullJobs {
 		select {
 		case e.pullJobs <- job:
@@ -188,17 +162,13 @@ func (e *Engine[S, R]) round() {
 		}
 	}
 
-	e.mutex.Lock()
 	for _, job := range pushesToReturn {
-		e.peers[job.peerId].pushInFlight = false
-		e.peers[job.peerId].pending = e.peers[job.peerId].pending.Join(job.snapshot)
+		e.peers[job.peerId].pushFailed(job.snapshot)
 	}
 
 	for _, job := range pullsToReturn {
-		e.peers[string(job)].pullInFlight = false
+		e.peers[string(job)].pullFailed()
 	}
-	e.mutex.Unlock()
-
 }
 
 func (e *Engine[S, R]) sendFullState(peerID string) error {
@@ -223,8 +193,8 @@ func (e *Engine[S, R]) sendLoop() {
 		case job := <-e.pushJobs:
 			binary, err := job.snapshot.MarshalBinary()
 			if err != nil {
-				//TODO: return state to pending to try to re-send in the next round
 				e.log.Error("failed to marshal payload", "err", err)
+				e.peers[job.peerId].pushFailed(job.snapshot)
 				continue
 			}
 
@@ -236,15 +206,10 @@ func (e *Engine[S, R]) sendLoop() {
 
 			if err := e.transport.Send(job.peerId, msg); err != nil {
 				e.log.Error("failed to send push job", "peer", job.peerId, "err", err)
-				e.mutex.Lock()
-				e.peers[job.peerId].pushInFlight = false
-				e.peers[job.peerId].pending = e.peers[job.peerId].pending.Join(job.snapshot)
-				e.mutex.Unlock()
+				e.peers[job.peerId].pushFailed(job.snapshot)
 				continue
 			}
-			e.mutex.Lock()
-			e.peers[job.peerId].pushInFlight = false
-			e.mutex.Unlock()
+			e.peers[job.peerId].pushDone()
 
 		case job := <-e.pullJobs:
 			msg := transport.Message{
@@ -256,16 +221,11 @@ func (e *Engine[S, R]) sendLoop() {
 
 			if err := e.transport.Send(peerId, msg); err != nil {
 				e.log.Error("failed to send pull job", "peer", job, "err", err)
-				e.mutex.Lock()
-				e.peers[peerId].pullInFlight = false
-				e.mutex.Unlock()
+				e.peers[peerId].pullFailed()
 				continue
 			}
 
-			e.mutex.Lock()
-			e.peers[peerId].pullInFlight = false
-			e.peers[peerId].needsPull = false
-			e.mutex.Unlock()
+			e.peers[peerId].pullDone()
 		}
 	}
 }

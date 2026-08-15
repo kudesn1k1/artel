@@ -2,6 +2,8 @@ package engine
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -32,6 +34,16 @@ func decodeGCounter(b []byte) (counter.GCounterState, error) {
 	var s counter.GCounterState
 	if err := s.UnmarshalBinary(b); err != nil {
 		return counter.GCounterState{}, err
+	}
+	return s, nil
+}
+
+// decodePNCounter is the same for the second state type: the engine is generic,
+// and a test with two different S values is what proves it.
+func decodePNCounter(b []byte) (counter.PNCounterState, error) {
+	var s counter.PNCounterState
+	if err := s.UnmarshalBinary(b); err != nil {
+		return counter.PNCounterState{}, err
 	}
 	return s, nil
 }
@@ -82,8 +94,10 @@ func mesh(t *testing.T, ids ...string) map[string]*node {
 	return nodes
 }
 
-// waitFor polls cond until it holds or waitDeadline expires.
-func waitFor(t *testing.T, what string, cond func() bool) {
+// waitFor polls cond until it holds or waitDeadline expires. The optional detail
+// closures are evaluated only on failure, so a timeout reports what the world
+// actually looked like instead of just what it should have looked like.
+func waitFor(t *testing.T, what string, cond func() bool, detail ...func() string) {
 	t.Helper()
 	deadline := time.Now().Add(waitDeadline)
 	for time.Now().Before(deadline) {
@@ -92,7 +106,26 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 		}
 		time.Sleep(tick / 2)
 	}
-	t.Fatalf("timed out after %v waiting for %s", waitDeadline, what)
+	msg := fmt.Sprintf("timed out after %v waiting for %s", waitDeadline, what)
+	for _, d := range detail {
+		msg += "; actual: " + d()
+	}
+	t.Fatal(msg)
+}
+
+// valuesOf renders the cluster as "A=3 B=3 C=0", for failure messages.
+func valuesOf(nodes map[string]*node) string {
+	ids := make([]string, 0, len(nodes))
+	for id := range nodes {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, fmt.Sprintf("%s=%d", id, nodes[id].replica.Value()))
+	}
+	return strings.Join(parts, " ")
 }
 
 // flakyLink wraps a Transport so a test can cut and restore the wire, and can
@@ -138,6 +171,32 @@ func (g *gatedLink) Send(peerID string, m transport.Message) error {
 }
 
 func (g *gatedLink) open() { g.once.Do(func() { close(g.gate) }) }
+
+// partialGate stalls sends to the named peers only and lets every other peer
+// through, so a test can hold one peer hostage without freezing the whole node.
+type partialGate struct {
+	transport.Transport
+	stalled map[string]bool
+	gate    chan struct{}
+	once    sync.Once
+}
+
+func newPartialGate(inner transport.Transport, stalled ...string) *partialGate {
+	set := make(map[string]bool, len(stalled))
+	for _, id := range stalled {
+		set[id] = true
+	}
+	return &partialGate{Transport: inner, stalled: set, gate: make(chan struct{})}
+}
+
+func (g *partialGate) Send(peerID string, m transport.Message) error {
+	if g.stalled[peerID] {
+		<-g.gate
+	}
+	return g.Transport.Send(peerID, m)
+}
+
+func (g *partialGate) open() { g.once.Do(func() { close(g.gate) }) }
 
 // manyPeers reports more peers than the engine's send queue can hold, so a
 // single round cannot possibly enqueue a job for every peer.

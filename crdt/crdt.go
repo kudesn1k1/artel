@@ -14,7 +14,7 @@ type StateReplica[S any] interface {
 	Merge(other S)
 }
 
-// Network is the v0 simulator: named replicas, all of one CRDT type. R is the
+// Network is the v0 simulator: named replicas, all one CRDT type. R is the
 // replica type, S the state it ships.
 type Network[R StateReplica[S], S any] struct {
 	replicas map[string]R

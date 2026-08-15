@@ -10,12 +10,16 @@ import (
 	"crdtlab/types/delta/counter"
 )
 
-// Spec for the Algorithm-1 anti-entropy engine, over the synchronous InProcess
-// transport. Two groups:
+// Behavioural spec for the Algorithm-1 anti-entropy engine, driven over the
+// synchronous InProcess transport.
 //
-//	GREEN — locks in what the engine already does (regression net).
-//	RED   — pins the work still open: Pull-on-join catch-up, Kind dispatch in
-//	        consume, and a round that cannot be left blocked by Stop.
+// Every assertion about what a peer ended up with is EVENTUAL — the engine is
+// asynchronous by design and is not reshaped to make tests deterministic. Tests
+// reach into the package (they are in `package engine`) only for round() and the
+// constructor; everything else goes through the public surface and the Transport
+// interface, so they survive refactors of the engine's internals.
+//
+// The real network path (transport/http.go) is covered in transport/http_test.go.
 
 // --- convergence -------------------------------------------------------------
 
@@ -30,7 +34,7 @@ func TestEngineConvergesAcrossFullMesh(t *testing.T) {
 		return nodes["A"].replica.Value() == 6 &&
 			nodes["B"].replica.Value() == 6 &&
 			nodes["C"].replica.Value() == 6
-	})
+	}, func() string { return valuesOf(nodes) })
 }
 
 // The delta buffer is drained by FlushDelta and the per-peer buffer is cleared
@@ -58,7 +62,7 @@ func TestEngineLosesNoUpdateWhileGossiping(t *testing.T) {
 			}
 		}
 		return true
-	})
+	}, func() string { return valuesOf(nodes) })
 }
 
 // Rounds keep firing after convergence, re-delivering states that are already
@@ -98,8 +102,80 @@ func TestEngineKeepsConvergingAcrossRounds(t *testing.T) {
 				}
 			}
 			return true
-		})
+		}, func() string { return valuesOf(nodes) })
 	}
+}
+
+// The engine is generic over the state type; every other test here instantiates
+// it with exactly one. This one drives a second type end to end, and with
+// decrements, so PNCounterState's own Join/IsBottom/codec ride the same path.
+func TestEngineConvergesWithPNCounter(t *testing.T) {
+	reg := transport.NewRegistry()
+
+	newPN := func(id string, peers ...string) *counter.PNCounter {
+		rep := counter.NewPNCounter(id)
+		e := NewEngine(rep, transport.NewInProcess(id, peers, reg), decodePNCounter)
+		t.Cleanup(func() { _ = e.Stop() })
+		if err := e.Start(tick); err != nil {
+			t.Fatalf("start %s: %v", id, err)
+		}
+		return rep
+	}
+
+	a := newPN("A", "B")
+	b := newPN("B", "A")
+
+	a.IncrementBy(10)
+	b.DecrementBy(4)
+
+	waitFor(t, "both replicas to settle on 6", func() bool {
+		return a.Value() == 6 && b.Value() == 6
+	}, func() string { return fmt.Sprintf("A=%d B=%d", a.Value(), b.Value()) })
+}
+
+// Nodes coming up at the same instant Pull each other simultaneously, and with
+// InProcess a Pull is answered re-entrantly on the caller's goroutine. Nothing
+// may hold a lock across that path — this test hangs (and the suite times out)
+// if anything ever does.
+func TestEngineStartsConcurrently(t *testing.T) {
+	reg := transport.NewRegistry()
+	ids := []string{"A", "B", "C", "D"}
+
+	nodes := make(map[string]*node, len(ids))
+	for _, id := range ids {
+		peers := make([]string, 0, len(ids)-1)
+		for _, other := range ids {
+			if other != id {
+				peers = append(peers, other)
+			}
+		}
+		nodes[id] = newNode(t, reg, id, peers...)
+	}
+
+	errs := make(chan error, len(nodes))
+	var wg sync.WaitGroup
+	for _, n := range nodes {
+		wg.Go(func() { errs <- n.engine.Start(tick) })
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent start: %v", err)
+		}
+	}
+
+	for _, n := range nodes {
+		n.replica.Increment()
+	}
+	waitFor(t, "every replica to reach 4", func() bool {
+		for _, n := range nodes {
+			if n.replica.Value() != 4 {
+				return false
+			}
+		}
+		return true
+	}, func() string { return valuesOf(nodes) })
 }
 
 // --- per-peer retain ---------------------------------------------------------
@@ -198,13 +274,44 @@ func TestEngineKeepsDeltasFlushedWhileAPushIsInFlight(t *testing.T) {
 	})
 }
 
-// --- catch-up after state loss (RED) ----------------------------------------
+// An unreachable peer parks a worker inside Send for as long as it stays
+// unreachable. The healthy peers must keep receiving — a shared queue drained by
+// a fixed pool is only safe while stalled peers cannot occupy the whole pool.
+//
+// Note the arithmetic this pins: a stalled peer can hold TWO workers (its push
+// job and its pull job), so the whole pool is parked by workerCount/2 unreachable
+// peers. Per-send deadlines (ctx) are what has to fix that; this test only guards
+// the one-stalled-peer case that works today.
+func TestEngineKeepsServingHealthyPeersWhileOneStalls(t *testing.T) {
+	reg := transport.NewRegistry()
+
+	// The stalled peer is listed first, so its jobs are queued ahead of B's.
+	gate := newPartialGate(transport.NewInProcess("A", []string{"stalled", "B"}, reg), "stalled")
+	a := counter.NewGCounter("A")
+	ae := NewEngine(a, gate, decodeGCounter)
+	t.Cleanup(func() { _ = ae.Stop() })
+	t.Cleanup(gate.open) // LIFO: the gate opens before Stop waits on the workers
+
+	b := newNode(t, reg, "B")
+	b.start(t)
+
+	a.IncrementBy(9)
+	if err := ae.Start(tick); err != nil {
+		t.Fatalf("start A: %v", err)
+	}
+
+	waitFor(t, "B to be served while another peer is stalled", func() bool {
+		return b.replica.Value() == 9
+	}, func() string { return fmt.Sprintf("B=%d", b.replica.Value()) })
+}
+
+// --- catch-up after state loss -----------------------------------------------
 
 // Retention does not cover a peer that ACKed everything and then lost its state:
 // A's buffer for B is empty and A has nothing left to resend. Nothing is
 // incremented after the restart — an absolute delta would otherwise heal B on
 // the next increment and hide the missing catch-up. Only a Pull of full state on
-// (re)join fixes this. Engine TODO: engine.go:52.
+// (re)join fixes this.
 func TestEngineCatchesUpAfterRestart(t *testing.T) {
 	reg := transport.NewRegistry()
 	a := newNode(t, reg, "A", "B")
@@ -233,7 +340,6 @@ func TestEngineCatchesUpAfterRestart(t *testing.T) {
 
 // A Pull carries no payload: consume must dispatch on Kind and answer with a
 // Push of the local full state instead of trying to merge an empty message.
-// Engine TODO: engine.go:125.
 func TestEngineAnswersPullWithFullState(t *testing.T) {
 	reg := transport.NewRegistry()
 	a := newNode(t, reg, "A") // no peers: this is about the inbound path only
