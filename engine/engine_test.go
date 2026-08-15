@@ -79,6 +79,29 @@ func TestEngineSteadyStateDoesNotDrift(t *testing.T) {
 	}
 }
 
+// Convergence must survive round after round, not just the first one. Every
+// other convergence test here happens to need a single successful push per
+// peer, which would hide any state that is armed once and never cleared.
+func TestEngineKeepsConvergingAcrossRounds(t *testing.T) {
+	nodes := mesh(t, "A", "B", "C")
+	order := []string{"A", "B", "C", "A"}
+
+	var total uint64
+	for i, id := range order {
+		nodes[id].replica.Increment()
+		total++
+
+		waitFor(t, fmt.Sprintf("every replica to reach %d after increment #%d", total, i+1), func() bool {
+			for _, n := range nodes {
+				if n.replica.Value() != total {
+					return false
+				}
+			}
+			return true
+		})
+	}
+}
+
 // --- per-peer retain ---------------------------------------------------------
 
 // A failed Send must put the snapshot back into the peer's buffer. Nothing is
@@ -91,7 +114,9 @@ func TestEngineRetainsDeltaWhenSendFails(t *testing.T) {
 	ae := NewEngine(a, link, decodeGCounter)
 	t.Cleanup(func() { _ = ae.Stop() })
 
-	b := newNode(t, reg, "B", "A")
+	// B has no peers of its own on purpose: it never Pulls A, so A's retained
+	// push is the ONLY route by which the increment can reach it.
+	b := newNode(t, reg, "B")
 	b.start(t)
 
 	link.broken.Store(true)
@@ -136,6 +161,40 @@ func TestEngineDeliversToPeerThatJoinsLate(t *testing.T) {
 
 	waitFor(t, "the late joiner to receive A's retained delta", func() bool {
 		return b.replica.Value() == 4
+	})
+}
+
+// A round that skips a peer because a push to it is still in flight must still
+// park the freshly flushed delta in that peer's buffer. The delta has already
+// been drained out of the replica by FlushDelta, so a round that merely skips
+// leaves it nowhere at all.
+func TestEngineKeepsDeltasFlushedWhileAPushIsInFlight(t *testing.T) {
+	reg := transport.NewRegistry()
+
+	gate := newGatedLink(transport.NewInProcess("A", []string{"B"}, reg))
+	a := counter.NewGCounter("A")
+	ae := NewEngine(a, gate, decodeGCounter)
+	t.Cleanup(func() { _ = ae.Stop() })
+	t.Cleanup(gate.open) // LIFO: the gate opens before Stop waits on the workers
+
+	// B has no peers: it never Pulls, so A's pushes are the only route to it.
+	b := newNode(t, reg, "B")
+	b.start(t)
+
+	a.IncrementBy(1)
+	if err := ae.Start(tick); err != nil {
+		t.Fatalf("start A: %v", err)
+	}
+
+	// Start's first round shipped {A:1} and the worker is now parked inside Send.
+	// This increment lands while that push is in flight, so every round until the
+	// gate opens finds B busy and skips it.
+	a.IncrementBy(2)
+	time.Sleep(10 * tick)
+
+	gate.open()
+	waitFor(t, "B to receive both increments", func() bool {
+		return b.replica.Value() == 3
 	})
 }
 

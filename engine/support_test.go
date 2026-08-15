@@ -120,6 +120,25 @@ func (f *flakyLink) waitForAttemptsAfter(t *testing.T, baseline int64) {
 	})
 }
 
+// gatedLink parks every Send until the gate is opened, so a test can hold a
+// send "in flight" for as long as it likes.
+type gatedLink struct {
+	transport.Transport
+	gate chan struct{}
+	once sync.Once
+}
+
+func newGatedLink(inner transport.Transport) *gatedLink {
+	return &gatedLink{Transport: inner, gate: make(chan struct{})}
+}
+
+func (g *gatedLink) Send(peerID string, m transport.Message) error {
+	<-g.gate
+	return g.Transport.Send(peerID, m)
+}
+
+func (g *gatedLink) open() { g.once.Do(func() { close(g.gate) }) }
+
 // manyPeers reports more peers than the engine's send queue can hold, so a
 // single round cannot possibly enqueue a job for every peer.
 type manyPeers struct {

@@ -20,6 +20,13 @@ type pushJob[S State[S]] struct {
 	snapshot S
 }
 
+type peerOutbox[S State[S]] struct {
+	pending      S
+	needsPull    bool
+	pushInFlight bool
+	pullInFlight bool // TODO: try to refactor to not track each kind of requests independently
+}
+
 type pullJob string
 
 const workerCount = 4
@@ -28,8 +35,7 @@ const workerCount = 4
 type Engine[S State[S], R crdt.DeltaReplica[S]] struct {
 	local     R
 	transport transport.Transport
-	pending   map[string]S // per-peer delta buffer
-	needsPull map[string]struct{}
+	peers     map[string]*peerOutbox[S]
 	decode    func([]byte) (S, error)
 	mutex     sync.Mutex
 	done      chan struct{}
@@ -42,11 +48,16 @@ type Engine[S State[S], R crdt.DeltaReplica[S]] struct {
 }
 
 func NewEngine[S State[S], R crdt.DeltaReplica[S]](local R, transport transport.Transport, decode func([]byte) (S, error)) *Engine[S, R] {
+	transportPeers := transport.Peers()
+	peers := make(map[string]*peerOutbox[S], len(transportPeers))
+	for _, peer := range transportPeers {
+		peers[peer] = &peerOutbox[S]{}
+	}
+
 	return &Engine[S, R]{
 		local:     local,
 		transport: transport,
-		pending:   make(map[string]S),
-		needsPull: make(map[string]struct{}),
+		peers:     peers,
 		decode:    decode,
 		done:      make(chan struct{}),
 		pushJobs:  make(chan pushJob[S], 100), // TODO: review send jobs count
@@ -62,7 +73,7 @@ func (e *Engine[S, R]) Serve() error {
 
 	e.mutex.Lock()
 	for _, peer := range e.transport.Peers() {
-		e.needsPull[peer] = struct{}{}
+		e.peers[peer].needsPull = true
 	}
 	e.mutex.Unlock()
 
@@ -133,31 +144,39 @@ func (e *Engine[S, R]) round() {
 
 	e.mutex.Lock()
 	for _, p := range peers {
-		if _, ok := e.needsPull[p]; ok {
+		if e.peers[p].needsPull && !e.peers[p].pullInFlight {
+			e.peers[p].pullInFlight = true
 			pullJobs = append(pullJobs, pullJob(p))
 		}
 
-		push := e.pending[p].Join(freshDelta)
+		push := e.peers[p].pending.Join(freshDelta)
 
 		if push.IsBottom() {
 			continue
 		}
 
+		if e.peers[p].pushInFlight {
+			e.peers[p].pending = push
+			continue
+		}
+
+		e.peers[p].pushInFlight = true
 		pushJobs = append(pushJobs, pushJob[S]{
 			peerId:   p,
 			snapshot: push,
 		})
 
-		e.pending[p] = *new(S)
+		e.peers[p].pending = *new(S)
 	}
 	e.mutex.Unlock()
 
-	var toReturn []pushJob[S]
+	var pushesToReturn []pushJob[S]
+	var pullsToReturn []pullJob
 	for _, job := range pushJobs {
 		select {
 		case e.pushJobs <- job:
 		default:
-			toReturn = append(toReturn, job)
+			pushesToReturn = append(pushesToReturn, job)
 		}
 	}
 
@@ -165,12 +184,18 @@ func (e *Engine[S, R]) round() {
 		select {
 		case e.pullJobs <- job:
 		default:
+			pullsToReturn = append(pullsToReturn, job)
 		}
 	}
 
 	e.mutex.Lock()
-	for _, job := range toReturn {
-		e.pending[job.peerId] = e.pending[job.peerId].Join(job.snapshot)
+	for _, job := range pushesToReturn {
+		e.peers[job.peerId].pushInFlight = false
+		e.peers[job.peerId].pending = e.peers[job.peerId].pending.Join(job.snapshot)
+	}
+
+	for _, job := range pullsToReturn {
+		e.peers[string(job)].pullInFlight = false
 	}
 	e.mutex.Unlock()
 
@@ -212,23 +237,34 @@ func (e *Engine[S, R]) sendLoop() {
 			if err := e.transport.Send(job.peerId, msg); err != nil {
 				e.log.Error("failed to send push job", "peer", job.peerId, "err", err)
 				e.mutex.Lock()
-				e.pending[job.peerId] = e.pending[job.peerId].Join(job.snapshot)
+				e.peers[job.peerId].pushInFlight = false
+				e.peers[job.peerId].pending = e.peers[job.peerId].pending.Join(job.snapshot)
 				e.mutex.Unlock()
 				continue
 			}
+			e.mutex.Lock()
+			e.peers[job.peerId].pushInFlight = false
+			e.mutex.Unlock()
+
 		case job := <-e.pullJobs:
 			msg := transport.Message{
 				From: e.transport.ID(),
 				Kind: transport.Pull,
 			}
 
-			if err := e.transport.Send(string(job), msg); err != nil {
+			peerId := string(job)
+
+			if err := e.transport.Send(peerId, msg); err != nil {
 				e.log.Error("failed to send pull job", "peer", job, "err", err)
+				e.mutex.Lock()
+				e.peers[peerId].pullInFlight = false
+				e.mutex.Unlock()
 				continue
 			}
 
 			e.mutex.Lock()
-			delete(e.needsPull, string(job))
+			e.peers[peerId].pullInFlight = false
+			e.peers[peerId].needsPull = false
 			e.mutex.Unlock()
 		}
 	}
