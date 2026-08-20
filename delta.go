@@ -1,5 +1,3 @@
-// Package artel is a delta-state CRDT toolkit and anti-entropy engine.
-// (Interim package doc — the full one lands in doc.go.)
 package artel
 
 // StateReplica is a CRDT replica. State returns its convergent state — the
