@@ -4,8 +4,14 @@ import (
 	"sync"
 )
 
-// peerOutbox represents a state of other peer we are communicating with. pending is a join-semilattice state waiting to be sent. It is cleared on send when pushInFlight is set to true and returned after in case of success or failure.
-// needsPull does not need such optimistic behavior so it is cleared on success
+// peerOutbox is the per-peer send state; pending is the join-semilattice
+// delta waiting to be shipped to that peer.
+//
+// A join-semilattice has no inverse: once takePush removes a snapshot from the
+// buffer there is nothing to "subtract back", so every failure path must
+// return what it took. Push is take-and-return-on-failure (pushFailed rejoins
+// the snapshot); pull is a boolean cleared only on success. pushInFlight must
+// be cleared on EVERY outcome — a path that forgets it blocks that peer forever.
 type peerOutbox[S DeltaState[S]] struct {
 	mu           sync.Mutex
 	pending      S

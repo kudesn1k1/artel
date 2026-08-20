@@ -76,6 +76,10 @@ func (e *Engine[S, PS, R]) serve() error {
 	return nil
 }
 
+// Start begins serving inbound messages and gossiping on the given interval.
+// The engine's lifetime is bound to ctx: cancelling it stops the gossip loop
+// and the workers. Start is one-shot — to restart, build a new Engine with
+// NewEngine.
 func (e *Engine[S, PS, R]) Start(ctx context.Context, interval time.Duration) error {
 	if err := e.serve(); err != nil {
 		return err
@@ -111,6 +115,12 @@ func (e *Engine[S, PS, R]) Start(ctx context.Context, interval time.Duration) er
 	return nil
 }
 
+// Stop cancels the engine, closes the transport, and waits for in-flight work
+// to drain. The wait — and only the wait — is bounded by ctx: on expiry Stop
+// returns ctx.Err() while the drain finishes in the background (Stopped
+// reports when it has). A transport close error is returned too, joined with
+// the ctx error when both occur. Stop is idempotent and safe to call on an
+// engine that was never started.
 func (e *Engine[S, PS, R]) Stop(ctx context.Context) error {
 	if e.ticker != nil {
 		e.ticker.Stop()
@@ -136,6 +146,8 @@ func (e *Engine[S, PS, R]) Stop(ctx context.Context) error {
 	}
 }
 
+// Stopped returns a channel that is closed once every engine goroutine has
+// exited — including after a Stop that gave up waiting.
 func (e *Engine[S, PS, R]) Stopped() <-chan struct{} {
 	return e.stopped
 }
