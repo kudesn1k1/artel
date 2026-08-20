@@ -5,7 +5,6 @@ import (
 	"encoding"
 	"errors"
 	"fmt"
-	"github.com/kudesn1k1/artel/transport"
 	"log/slog"
 	"sync"
 	"time"
@@ -32,7 +31,7 @@ const workerCount = 8
 
 type Engine[S State[S], PS StatePtr[S], R DeltaReplica[S]] struct {
 	local       R
-	transport   transport.Transport
+	transport   Transport
 	peers       map[string]*peerOutbox[S]
 	ticker      *time.Ticker
 	pushJobs    chan pushJob[S]
@@ -46,7 +45,7 @@ type Engine[S State[S], PS StatePtr[S], R DeltaReplica[S]] struct {
 	stopOnce    sync.Once
 }
 
-func NewEngine[S State[S], PS StatePtr[S], R DeltaReplica[S]](local R, transport transport.Transport) *Engine[S, PS, R] {
+func NewEngine[S State[S], PS StatePtr[S], R DeltaReplica[S]](local R, transport Transport) *Engine[S, PS, R] {
 	transportPeers := transport.Peers()
 	peers := make(map[string]*peerOutbox[S], len(transportPeers))
 	for _, peer := range transportPeers {
@@ -141,8 +140,8 @@ func (e *Engine[S, PS, R]) Stopped() <-chan struct{} {
 	return e.stopped
 }
 
-func (e *Engine[S, PS, R]) consume(ctx context.Context, m transport.Message) error {
-	if m.Kind == transport.Pull {
+func (e *Engine[S, PS, R]) consume(ctx context.Context, m Message) error {
+	if m.Kind == KindPull {
 		return e.sendFullState(ctx, m.From)
 	}
 
@@ -206,9 +205,9 @@ func (e *Engine[S, PS, R]) sendFullState(ctx context.Context, peerID string) err
 		return err // not wrapping the error cause call stack show the problem origin, no need to wrap here
 	}
 
-	message := transport.Message{
+	message := Message{
 		From:    e.transport.ID(),
-		Kind:    transport.Push,
+		Kind:    KindPush,
 		Payload: binary,
 	}
 	return e.transport.Send(ctx, peerID, message)
@@ -235,9 +234,9 @@ func (e *Engine[S, PS, R]) handlePush(job pushJob[S]) {
 		return
 	}
 
-	msg := transport.Message{
+	msg := Message{
 		From:    e.transport.ID(),
-		Kind:    transport.Push,
+		Kind:    KindPush,
 		Payload: binary,
 	}
 
@@ -255,9 +254,9 @@ func (e *Engine[S, PS, R]) handlePush(job pushJob[S]) {
 }
 
 func (e *Engine[S, PS, R]) handlePull(job pullJob) {
-	msg := transport.Message{
+	msg := Message{
 		From: e.transport.ID(),
-		Kind: transport.Pull,
+		Kind: KindPull,
 	}
 
 	ctx, cancel := context.WithTimeout(e.ctx, e.sendTimeout)

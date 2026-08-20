@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/kudesn1k1/artel"
 )
 
 // Contract tests for the real-network transport. Everything the engine relies on
@@ -39,7 +41,7 @@ type recorder struct {
 	tr *HTTP
 
 	mu         sync.Mutex
-	got        []Message
+	got        []artel.Message
 	handlerErr error
 	gate       chan struct{}
 
@@ -49,7 +51,7 @@ type recorder struct {
 func serveRecorder(t *testing.T, id, addr string, peers map[string]string) *recorder {
 	t.Helper()
 	r := &recorder{tr: NewHTTP(id, addr, peers)}
-	if err := r.tr.Serve(func(ctx context.Context, m Message) error {
+	if err := r.tr.Serve(func(ctx context.Context, m artel.Message) error {
 		r.mu.Lock()
 		r.got = append(r.got, m)
 		err, gate := r.handlerErr, r.gate
@@ -71,10 +73,10 @@ func serveRecorder(t *testing.T, id, addr string, peers map[string]string) *reco
 	return r
 }
 
-func (r *recorder) received() []Message {
+func (r *recorder) received() []artel.Message {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return append([]Message(nil), r.got...)
+	return append([]artel.Message(nil), r.got...)
 }
 
 func (r *recorder) failWith(err error) {
@@ -104,7 +106,7 @@ func TestHTTPDeliversTheEnvelopeIntact(t *testing.T) {
 	// Deliberately not valid UTF-8: the payload is opaque bytes and must survive
 	// the JSON envelope (it rides as base64) unchanged.
 	payload := []byte{0x00, 0xff, 0xfe, 'o', 'k'}
-	if err := a.Send(context.Background(), "B", Message{From: "A", Kind: Push, Payload: payload}); err != nil {
+	if err := a.Send(context.Background(), "B", artel.Message{From: "A", Kind: artel.KindPush, Payload: payload}); err != nil {
 		t.Fatalf("send: %v", err)
 	}
 
@@ -112,7 +114,7 @@ func TestHTTPDeliversTheEnvelopeIntact(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("B received %d messages, want 1", len(got))
 	}
-	if got[0].From != "A" || got[0].Kind != Push {
+	if got[0].From != "A" || got[0].Kind != artel.KindPush {
 		t.Fatalf("envelope mangled: From=%q Kind=%v", got[0].From, got[0].Kind)
 	}
 	if !bytes.Equal(got[0].Payload, payload) {
@@ -127,12 +129,12 @@ func TestHTTPCarriesAPullWithNoPayload(t *testing.T) {
 	a := NewHTTP("A", freeAddr(t), map[string]string{"B": "http://" + addrB})
 	t.Cleanup(func() { _ = a.Close() })
 
-	if err := a.Send(context.Background(), "B", Message{From: "A", Kind: Pull}); err != nil {
+	if err := a.Send(context.Background(), "B", artel.Message{From: "A", Kind: artel.KindPull}); err != nil {
 		t.Fatalf("send: %v", err)
 	}
 
 	got := b.received()
-	if len(got) != 1 || got[0].Kind != Pull {
+	if len(got) != 1 || got[0].Kind != artel.KindPull {
 		t.Fatalf("B did not receive a Pull: %+v", got)
 	}
 	if len(got[0].Payload) != 0 {
@@ -151,7 +153,7 @@ func TestHTTPHandlerErrorReachesTheSender(t *testing.T) {
 	a := NewHTTP("A", freeAddr(t), map[string]string{"B": "http://" + addrB})
 	t.Cleanup(func() { _ = a.Close() })
 
-	if err := a.Send(context.Background(), "B", Message{From: "A", Kind: Push, Payload: []byte("{}")}); err == nil {
+	if err := a.Send(context.Background(), "B", artel.Message{From: "A", Kind: artel.KindPush, Payload: []byte("{}")}); err == nil {
 		t.Fatal("Send reported success although the peer's handler failed")
 	}
 }
@@ -164,7 +166,7 @@ func TestHTTPErrorResponseIsWellFormed(t *testing.T) {
 	node := serveRecorder(t, "B", addr, nil)
 	node.failWith(io.ErrUnexpectedEOF)
 
-	body, _ := json.Marshal(Message{From: "probe", Kind: Push, Payload: []byte("{}")})
+	body, _ := json.Marshal(artel.Message{From: "probe", Kind: artel.KindPush, Payload: []byte("{}")})
 	resp, err := http.Post("http://"+addr+"/gossip", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("post: %v", err)
@@ -187,7 +189,7 @@ func TestHTTPUnknownPeerIsReported(t *testing.T) {
 	a := NewHTTP("A", freeAddr(t), map[string]string{})
 	t.Cleanup(func() { _ = a.Close() })
 
-	if err := a.Send(context.Background(), "nobody", Message{From: "A", Kind: Push}); err == nil {
+	if err := a.Send(context.Background(), "nobody", artel.Message{From: "A", Kind: artel.KindPush}); err == nil {
 		t.Fatal("Send to an unknown peer reported success")
 	}
 }
@@ -197,7 +199,7 @@ func TestHTTPUnreachablePeerIsReported(t *testing.T) {
 	a := NewHTTP("A", freeAddr(t), map[string]string{"B": "http://" + freeAddr(t)})
 	t.Cleanup(func() { _ = a.Close() })
 
-	if err := a.Send(context.Background(), "B", Message{From: "A", Kind: Push, Payload: []byte("{}")}); err == nil {
+	if err := a.Send(context.Background(), "B", artel.Message{From: "A", Kind: artel.KindPush, Payload: []byte("{}")}); err == nil {
 		t.Fatal("Send to a dead peer reported success")
 	}
 }
@@ -229,7 +231,7 @@ func TestHTTPCloseStopsServing(t *testing.T) {
 	a := NewHTTP("A", freeAddr(t), map[string]string{"B": "http://" + addrB})
 	t.Cleanup(func() { _ = a.Close() })
 
-	if err := a.Send(context.Background(), "B", Message{From: "A", Kind: Push, Payload: []byte("{}")}); err != nil {
+	if err := a.Send(context.Background(), "B", artel.Message{From: "A", Kind: artel.KindPush, Payload: []byte("{}")}); err != nil {
 		t.Fatalf("send before close: %v", err)
 	}
 	if err := b.tr.Close(); err != nil {
@@ -239,7 +241,7 @@ func TestHTTPCloseStopsServing(t *testing.T) {
 	// Shutdown drains in-flight connections; give the listener a moment to go.
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if err := a.Send(context.Background(), "B", Message{From: "A", Kind: Push, Payload: []byte("{}")}); err != nil {
+		if err := a.Send(context.Background(), "B", artel.Message{From: "A", Kind: artel.KindPush, Payload: []byte("{}")}); err != nil {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -262,7 +264,7 @@ func TestHTTPSendHonoursACancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := a.Send(ctx, "B", Message{From: "A", Kind: Push, Payload: []byte("{}")})
+	err := a.Send(ctx, "B", artel.Message{From: "A", Kind: artel.KindPush, Payload: []byte("{}")})
 	if err == nil {
 		t.Fatal("Send with a cancelled context reported success")
 	}
@@ -290,7 +292,7 @@ func TestHTTPSendHonoursADeadline(t *testing.T) {
 	defer cancel()
 
 	start := time.Now()
-	err := a.Send(ctx, "B", Message{From: "A", Kind: Push, Payload: []byte("{}")})
+	err := a.Send(ctx, "B", artel.Message{From: "A", Kind: artel.KindPush, Payload: []byte("{}")})
 	elapsed := time.Since(start)
 
 	if err == nil {
@@ -320,7 +322,7 @@ func TestHTTPHandlerContextDiesWhenTheSenderGivesUp(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	if err := a.Send(ctx, "B", Message{From: "A", Kind: Pull}); err == nil {
+	if err := a.Send(ctx, "B", artel.Message{From: "A", Kind: artel.KindPull}); err == nil {
 		t.Fatal("Send reported success although the peer never answered")
 	}
 

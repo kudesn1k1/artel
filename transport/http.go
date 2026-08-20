@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"sort"
 	"time"
+
+	"github.com/kudesn1k1/artel"
 )
 
 // HTTP is a Transport over the real network: each node runs a tiny HTTP server
@@ -27,7 +29,7 @@ type HTTP struct {
 	log    *slog.Logger
 }
 
-var _ Transport = (*HTTP)(nil)
+var _ artel.Transport = (*HTTP)(nil)
 
 func NewHTTP(id, addr string, peers map[string]string) *HTTP {
 	return &HTTP{
@@ -43,7 +45,7 @@ func (h *HTTP) ID() string {
 	return h.id
 }
 
-func (t *HTTP) Send(ctx context.Context, peerID string, m Message) error {
+func (t *HTTP) Send(ctx context.Context, peerID string, m artel.Message) error {
 	base, ok := t.peers[peerID]
 	if !ok {
 		return fmt.Errorf("transport: unknown peer %q", peerID)
@@ -82,10 +84,10 @@ func (t *HTTP) Peers() []string {
 	return ids
 }
 
-func (t *HTTP) Serve(h Handler) error {
+func (t *HTTP) Serve(h artel.Handler) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/gossip", func(w http.ResponseWriter, r *http.Request) {
-		var m Message
+		var m artel.Message
 		if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"sync"
+
+	"github.com/kudesn1k1/artel"
 )
 
 // Registry is a shared in-memory switchboard: every InProcess transport in one
@@ -13,20 +15,20 @@ import (
 // deterministic: no wall-clock timing, no background goroutines to wait on.
 type Registry struct {
 	mu       sync.Mutex
-	handlers map[string]Handler
+	handlers map[string]artel.Handler
 }
 
 func NewRegistry() *Registry {
-	return &Registry{handlers: make(map[string]Handler)}
+	return &Registry{handlers: make(map[string]artel.Handler)}
 }
 
-func (r *Registry) register(id string, h Handler) {
+func (r *Registry) register(id string, h artel.Handler) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.handlers[id] = h
 }
 
-func (r *Registry) deliver(ctx context.Context, to string, m Message) error {
+func (r *Registry) deliver(ctx context.Context, to string, m artel.Message) error {
 	r.mu.Lock()
 	h := r.handlers[to]
 	r.mu.Unlock() // release BEFORE calling h: a handler may Send again (Pull → Push),
@@ -45,7 +47,7 @@ type InProcess struct {
 	reg   *Registry
 }
 
-var _ Transport = (*InProcess)(nil)
+var _ artel.Transport = (*InProcess)(nil)
 
 func NewInProcess(id string, peers []string, reg *Registry) *InProcess {
 	return &InProcess{id: id, peers: peers, reg: reg}
@@ -55,13 +57,13 @@ func (i *InProcess) ID() string {
 	return i.id
 }
 
-func (t *InProcess) Send(ctx context.Context, peerID string, m Message) error {
+func (t *InProcess) Send(ctx context.Context, peerID string, m artel.Message) error {
 	return t.reg.deliver(ctx, peerID, m)
 }
 
 func (t *InProcess) Peers() []string { return t.peers }
 
-func (t *InProcess) Serve(h Handler) error {
+func (t *InProcess) Serve(h artel.Handler) error {
 	t.reg.register(t.id, h)
 	return nil
 }

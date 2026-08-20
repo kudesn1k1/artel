@@ -470,7 +470,7 @@ func TestEngineAnswersPullWithFullState(t *testing.T) {
 	a.replica.IncrementBy(7)
 
 	p := newProbe(t, reg, "probe", "A")
-	if err := p.send("A", transport.Message{From: "probe", Kind: transport.Pull}); err != nil {
+	if err := p.send("A", artel.Message{From: "probe", Kind: artel.KindPull}); err != nil {
 		t.Fatalf("A rejected a Pull: %v", err)
 	}
 

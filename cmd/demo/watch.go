@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kudesn1k1/artel/transport"
+	"github.com/kudesn1k1/artel"
 )
 
 // peerHealth is everything the dashboard says about one peer.
@@ -22,13 +22,13 @@ type peerHealth struct {
 // the Transport interface is exactly the seam that lets the demo observe the
 // wire without the engine growing an API for it.
 type watchedTransport struct {
-	transport.Transport
+	artel.Transport
 
 	mu    sync.Mutex
 	peers map[string]*peerHealth
 }
 
-func newWatchedTransport(inner transport.Transport) *watchedTransport {
+func newWatchedTransport(inner artel.Transport) *watchedTransport {
 	w := &watchedTransport{Transport: inner, peers: make(map[string]*peerHealth)}
 	for _, id := range inner.Peers() {
 		w.peers[id] = &peerHealth{}
@@ -36,7 +36,7 @@ func newWatchedTransport(inner transport.Transport) *watchedTransport {
 	return w
 }
 
-func (w *watchedTransport) Send(ctx context.Context, peerID string, m transport.Message) error {
+func (w *watchedTransport) Send(ctx context.Context, peerID string, m artel.Message) error {
 	err := w.Transport.Send(ctx, peerID, m)
 
 	w.mu.Lock()

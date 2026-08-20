@@ -140,12 +140,12 @@ func valuesOf(nodes map[string]*node) string {
 // flakyLink wraps a Transport so a test can cut and restore the wire, and can
 // wait for a real send attempt instead of sleeping a guessed duration.
 type flakyLink struct {
-	transport.Transport
+	artel.Transport
 	broken   atomic.Bool
 	attempts atomic.Int64
 }
 
-func (f *flakyLink) Send(ctx context.Context, peerID string, m transport.Message) error {
+func (f *flakyLink) Send(ctx context.Context, peerID string, m artel.Message) error {
 	f.attempts.Add(1)
 	if f.broken.Load() {
 		return fmt.Errorf("flaky: peer %q unreachable", peerID)
@@ -169,18 +169,18 @@ func (f *flakyLink) waitForAttemptsAfter(t *testing.T, baseline int64) {
 // when its context is cancelled or expires, and a mock that ignored ctx would
 // make cancellation untestable.
 type gatedLink struct {
-	transport.Transport
+	artel.Transport
 	gate     chan struct{}
 	once     sync.Once
 	attempts atomic.Int64
 	parked   atomic.Int64
 }
 
-func newGatedLink(inner transport.Transport) *gatedLink {
+func newGatedLink(inner artel.Transport) *gatedLink {
 	return &gatedLink{Transport: inner, gate: make(chan struct{})}
 }
 
-func (g *gatedLink) Send(ctx context.Context, peerID string, m transport.Message) error {
+func (g *gatedLink) Send(ctx context.Context, peerID string, m artel.Message) error {
 	g.attempts.Add(1)
 	g.parked.Add(1)
 	defer g.parked.Add(-1)
@@ -198,13 +198,13 @@ func (g *gatedLink) open() { g.once.Do(func() { close(g.gate) }) }
 // partialGate stalls sends to the named peers only and lets every other peer
 // through, so a test can hold one peer hostage without freezing the whole node.
 type partialGate struct {
-	transport.Transport
+	artel.Transport
 	stalled map[string]bool
 	gate    chan struct{}
 	once    sync.Once
 }
 
-func newPartialGate(inner transport.Transport, stalled ...string) *partialGate {
+func newPartialGate(inner artel.Transport, stalled ...string) *partialGate {
 	set := make(map[string]bool, len(stalled))
 	for _, id := range stalled {
 		set[id] = true
@@ -212,7 +212,7 @@ func newPartialGate(inner transport.Transport, stalled ...string) *partialGate {
 	return &partialGate{Transport: inner, stalled: set, gate: make(chan struct{})}
 }
 
-func (g *partialGate) Send(ctx context.Context, peerID string, m transport.Message) error {
+func (g *partialGate) Send(ctx context.Context, peerID string, m artel.Message) error {
 	if g.stalled[peerID] {
 		select {
 		case <-g.gate:
@@ -242,8 +242,8 @@ func newManyPeers(n int) *manyPeers {
 }
 
 // Send always succeeds; the Pulls that made it out are recorded.
-func (m *manyPeers) Send(_ context.Context, peerID string, msg transport.Message) error {
-	if msg.Kind == transport.Pull {
+func (m *manyPeers) Send(_ context.Context, peerID string, msg artel.Message) error {
+	if msg.Kind == artel.KindPull {
 		m.mu.Lock()
 		m.pulled[peerID] = struct{}{}
 		m.mu.Unlock()
@@ -257,23 +257,23 @@ func (m *manyPeers) pulledCount() int {
 	return len(m.pulled)
 }
 
-func (m *manyPeers) ID() string                    { return "many_peers" }
-func (m *manyPeers) Peers() []string               { return m.ids }
-func (m *manyPeers) Serve(transport.Handler) error { return nil }
-func (m *manyPeers) Close() error                  { return nil }
+func (m *manyPeers) ID() string                { return "many_peers" }
+func (m *manyPeers) Peers() []string           { return m.ids }
+func (m *manyPeers) Serve(artel.Handler) error { return nil }
+func (m *manyPeers) Close() error              { return nil }
 
 // probe is a bare registry participant — no engine — used to speak the wire
 // protocol directly: send a raw Message and record what comes back.
 type probe struct {
 	tr       *transport.InProcess
 	mu       sync.Mutex
-	received []transport.Message
+	received []artel.Message
 }
 
 func newProbe(t *testing.T, reg *transport.Registry, id string, peers ...string) *probe {
 	t.Helper()
 	p := &probe{tr: transport.NewInProcess(id, peers, reg)}
-	if err := p.tr.Serve(func(_ context.Context, m transport.Message) error {
+	if err := p.tr.Serve(func(_ context.Context, m artel.Message) error {
 		p.mu.Lock()
 		defer p.mu.Unlock()
 		p.received = append(p.received, m)
@@ -284,16 +284,16 @@ func newProbe(t *testing.T, reg *transport.Registry, id string, peers ...string)
 	return p
 }
 
-func (p *probe) send(to string, m transport.Message) error {
+func (p *probe) send(to string, m artel.Message) error {
 	return p.tr.Send(context.Background(), to, m)
 }
 
-func (p *probe) pushes() []transport.Message {
+func (p *probe) pushes() []artel.Message {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	var out []transport.Message
+	var out []artel.Message
 	for _, m := range p.received {
-		if m.Kind == transport.Push {
+		if m.Kind == artel.KindPush {
 			out = append(out, m)
 		}
 	}
