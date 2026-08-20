@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -26,10 +27,16 @@ const (
 
 	// waitDeadline bounds every eventual assertion.
 	waitDeadline = 3 * time.Second
+
+	// neverTimeOut is handed to sendTimeout by the tests that need a send to stay
+	// genuinely parked inside the transport, so a per-send deadline cannot be what
+	// makes them pass. Tests about deadlines set a short one instead.
+	neverTimeOut = time.Hour
 )
 
-// decodeGCounter is the decoder closure the engine needs: UnmarshalBinary lives
-// on *GCounterState, the engine ships values of GCounterState.
+// decodeGCounter turns a wire payload back into a state. The engine derives this
+// for itself from its type parameters; the tests need it to inspect payloads they
+// intercept on the wire.
 func decodeGCounter(b []byte) (counter.GCounterState, error) {
 	var s counter.GCounterState
 	if err := s.UnmarshalBinary(b); err != nil {
@@ -38,39 +45,41 @@ func decodeGCounter(b []byte) (counter.GCounterState, error) {
 	return s, nil
 }
 
-// decodePNCounter is the same for the second state type: the engine is generic,
-// and a test with two different S values is what proves it.
-func decodePNCounter(b []byte) (counter.PNCounterState, error) {
-	var s counter.PNCounterState
-	if err := s.UnmarshalBinary(b); err != nil {
-		return counter.PNCounterState{}, err
-	}
-	return s, nil
-}
-
-type gEngine = Engine[counter.GCounterState, *counter.GCounter]
+type gEngine = Engine[counter.GCounterState, *counter.GCounterState, *counter.GCounter]
 
 // node is one replica + its transport + its engine.
+//
+// Note the two ids: nodeID is the transport address book key and is stable
+// across restarts, replicaID is the incarnation and is fresh on every boot.
+// Most tests never restart anything and pass the same string for both.
 type node struct {
-	id      string
-	replica *counter.GCounter
-	engine  *gEngine
+	nodeID    string
+	replicaID string
+	replica   *counter.GCounter
+	engine    *gEngine
 }
 
 // newNode wires a node onto the shared registry but does NOT start gossiping.
 // Stopping it is registered as cleanup, so a test may also stop it early.
 func newNode(t *testing.T, reg *transport.Registry, id string, peers ...string) *node {
 	t.Helper()
-	rep := counter.NewGCounter(id)
-	e := NewEngine(rep, transport.NewInProcess(id, peers, reg), decodeGCounter)
+	return newNodeAs(t, reg, id, id, peers...)
+}
+
+// newNodeAs is newNode with the node id and the replica id given separately —
+// what a restart actually looks like: same address, new incarnation.
+func newNodeAs(t *testing.T, reg *transport.Registry, nodeID, replicaID string, peers ...string) *node {
+	t.Helper()
+	rep := counter.NewGCounter(replicaID)
+	e := NewEngine(rep, transport.NewInProcess(nodeID, peers, reg))
 	t.Cleanup(func() { _ = e.Stop() })
-	return &node{id: id, replica: rep, engine: e}
+	return &node{nodeID: nodeID, replicaID: replicaID, replica: rep, engine: e}
 }
 
 func (n *node) start(t *testing.T) {
 	t.Helper()
 	if err := n.engine.Start(tick); err != nil {
-		t.Fatalf("start %s: %v", n.id, err)
+		t.Fatalf("start %s: %v", n.nodeID, err)
 	}
 }
 
@@ -136,12 +145,12 @@ type flakyLink struct {
 	attempts atomic.Int64
 }
 
-func (f *flakyLink) Send(peerID string, m transport.Message) error {
+func (f *flakyLink) Send(ctx context.Context, peerID string, m transport.Message) error {
 	f.attempts.Add(1)
 	if f.broken.Load() {
 		return fmt.Errorf("flaky: peer %q unreachable", peerID)
 	}
-	return f.Transport.Send(peerID, m)
+	return f.Transport.Send(ctx, peerID, m)
 }
 
 // waitForAttemptsAfter waits until at least two further send attempts have been
@@ -155,19 +164,33 @@ func (f *flakyLink) waitForAttemptsAfter(t *testing.T, baseline int64) {
 
 // gatedLink parks every Send until the gate is opened, so a test can hold a
 // send "in flight" for as long as it likes.
+//
+// It parks on the caller's ctx as well as on the gate: a real transport aborts
+// when its context is cancelled or expires, and a mock that ignored ctx would
+// make cancellation untestable.
 type gatedLink struct {
 	transport.Transport
-	gate chan struct{}
-	once sync.Once
+	gate     chan struct{}
+	once     sync.Once
+	attempts atomic.Int64
+	parked   atomic.Int64
 }
 
 func newGatedLink(inner transport.Transport) *gatedLink {
 	return &gatedLink{Transport: inner, gate: make(chan struct{})}
 }
 
-func (g *gatedLink) Send(peerID string, m transport.Message) error {
-	<-g.gate
-	return g.Transport.Send(peerID, m)
+func (g *gatedLink) Send(ctx context.Context, peerID string, m transport.Message) error {
+	g.attempts.Add(1)
+	g.parked.Add(1)
+	defer g.parked.Add(-1)
+
+	select {
+	case <-g.gate:
+		return g.Transport.Send(ctx, peerID, m)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (g *gatedLink) open() { g.once.Do(func() { close(g.gate) }) }
@@ -189,11 +212,15 @@ func newPartialGate(inner transport.Transport, stalled ...string) *partialGate {
 	return &partialGate{Transport: inner, stalled: set, gate: make(chan struct{})}
 }
 
-func (g *partialGate) Send(peerID string, m transport.Message) error {
+func (g *partialGate) Send(ctx context.Context, peerID string, m transport.Message) error {
 	if g.stalled[peerID] {
-		<-g.gate
+		select {
+		case <-g.gate:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
-	return g.Transport.Send(peerID, m)
+	return g.Transport.Send(ctx, peerID, m)
 }
 
 func (g *partialGate) open() { g.once.Do(func() { close(g.gate) }) }
@@ -215,7 +242,7 @@ func newManyPeers(n int) *manyPeers {
 }
 
 // Send always succeeds; the Pulls that made it out are recorded.
-func (m *manyPeers) Send(peerID string, msg transport.Message) error {
+func (m *manyPeers) Send(_ context.Context, peerID string, msg transport.Message) error {
 	if msg.Kind == transport.Pull {
 		m.mu.Lock()
 		m.pulled[peerID] = struct{}{}
@@ -246,7 +273,7 @@ type probe struct {
 func newProbe(t *testing.T, reg *transport.Registry, id string, peers ...string) *probe {
 	t.Helper()
 	p := &probe{tr: transport.NewInProcess(id, peers, reg)}
-	if err := p.tr.Serve(func(m transport.Message) error {
+	if err := p.tr.Serve(func(_ context.Context, m transport.Message) error {
 		p.mu.Lock()
 		defer p.mu.Unlock()
 		p.received = append(p.received, m)
@@ -255,6 +282,10 @@ func newProbe(t *testing.T, reg *transport.Registry, id string, peers ...string)
 		t.Fatalf("probe %s serve: %v", id, err)
 	}
 	return p
+}
+
+func (p *probe) send(to string, m transport.Message) error {
+	return p.tr.Send(context.Background(), to, m)
 }
 
 func (p *probe) pushes() []transport.Message {

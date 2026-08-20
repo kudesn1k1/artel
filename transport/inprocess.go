@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"context"
 	"fmt"
 	"sync"
 )
@@ -25,7 +26,7 @@ func (r *Registry) register(id string, h Handler) {
 	r.handlers[id] = h
 }
 
-func (r *Registry) deliver(to string, m Message) error {
+func (r *Registry) deliver(ctx context.Context, to string, m Message) error {
 	r.mu.Lock()
 	h := r.handlers[to]
 	r.mu.Unlock() // release BEFORE calling h: a handler may Send again (Pull → Push),
@@ -33,7 +34,7 @@ func (r *Registry) deliver(to string, m Message) error {
 	if h == nil {
 		return fmt.Errorf("transport: no peer registered as %q", to)
 	}
-	return h(m)
+	return h(ctx, m)
 }
 
 // InProcess is a Transport backed by a shared Registry. Use one Registry per
@@ -54,7 +55,9 @@ func (i *InProcess) ID() string {
 	return i.id
 }
 
-func (t *InProcess) Send(peerID string, m Message) error { return t.reg.deliver(peerID, m) }
+func (t *InProcess) Send(ctx context.Context, peerID string, m Message) error {
+	return t.reg.deliver(ctx, peerID, m)
+}
 
 func (t *InProcess) Peers() []string { return t.peers }
 

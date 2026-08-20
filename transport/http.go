@@ -43,7 +43,7 @@ func (h *HTTP) ID() string {
 	return h.id
 }
 
-func (t *HTTP) Send(peerID string, m Message) error {
+func (t *HTTP) Send(ctx context.Context, peerID string, m Message) error {
 	base, ok := t.peers[peerID]
 	if !ok {
 		return fmt.Errorf("transport: unknown peer %q", peerID)
@@ -52,7 +52,13 @@ func (t *HTTP) Send(peerID string, m Message) error {
 	if err != nil {
 		return err
 	}
-	resp, err := t.client.Post(base+"/gossip", "application/json", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/gossip", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := t.client.Do(req)
 	if err != nil {
 		return err // peer is down / unreachable — the engine decides whether to care
 	}
@@ -84,7 +90,7 @@ func (t *HTTP) Serve(h Handler) error {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if err := h(m); err != nil {
+		if err := h(r.Context(), m); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -98,7 +104,7 @@ func (t *HTTP) Serve(h Handler) error {
 	if err != nil {
 		return err
 	}
-	t.server = &http.Server{Handler: mux}
+	t.server = &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		if err := t.server.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			t.log.Error("gossip server stopped", "node", t.id, "err", err)

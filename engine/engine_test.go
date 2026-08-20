@@ -114,7 +114,7 @@ func TestEngineConvergesWithPNCounter(t *testing.T) {
 
 	newPN := func(id string, peers ...string) *counter.PNCounter {
 		rep := counter.NewPNCounter(id)
-		e := NewEngine(rep, transport.NewInProcess(id, peers, reg), decodePNCounter)
+		e := NewEngine(rep, transport.NewInProcess(id, peers, reg))
 		t.Cleanup(func() { _ = e.Stop() })
 		if err := e.Start(tick); err != nil {
 			t.Fatalf("start %s: %v", id, err)
@@ -187,7 +187,7 @@ func TestEngineRetainsDeltaWhenSendFails(t *testing.T) {
 
 	link := &flakyLink{Transport: transport.NewInProcess("A", []string{"B"}, reg)}
 	a := counter.NewGCounter("A")
-	ae := NewEngine(a, link, decodeGCounter)
+	ae := NewEngine(a, link)
 	t.Cleanup(func() { _ = ae.Stop() })
 
 	// B has no peers of its own on purpose: it never Pulls A, so A's retained
@@ -223,7 +223,7 @@ func TestEngineDeliversToPeerThatJoinsLate(t *testing.T) {
 	// sends fail on their own because "B" is not registered yet.
 	link := &flakyLink{Transport: transport.NewInProcess("A", []string{"B"}, reg)}
 	a := counter.NewGCounter("A")
-	ae := NewEngine(a, link, decodeGCounter)
+	ae := NewEngine(a, link)
 	t.Cleanup(func() { _ = ae.Stop() })
 
 	if err := ae.Start(tick); err != nil {
@@ -249,7 +249,8 @@ func TestEngineKeepsDeltasFlushedWhileAPushIsInFlight(t *testing.T) {
 
 	gate := newGatedLink(transport.NewInProcess("A", []string{"B"}, reg))
 	a := counter.NewGCounter("A")
-	ae := NewEngine(a, gate, decodeGCounter)
+	ae := NewEngine(a, gate)
+	ae.sendTimeout = neverTimeOut // this test is about a busy peer, not about deadlines
 	t.Cleanup(func() { _ = ae.Stop() })
 	t.Cleanup(gate.open) // LIFO: the gate opens before Stop waits on the workers
 
@@ -278,17 +279,19 @@ func TestEngineKeepsDeltasFlushedWhileAPushIsInFlight(t *testing.T) {
 // unreachable. The healthy peers must keep receiving — a shared queue drained by
 // a fixed pool is only safe while stalled peers cannot occupy the whole pool.
 //
-// Note the arithmetic this pins: a stalled peer can hold TWO workers (its push
-// job and its pull job), so the whole pool is parked by workerCount/2 unreachable
-// peers. Per-send deadlines (ctx) are what has to fix that; this test only guards
-// the one-stalled-peer case that works today.
+// This one pins queue fairness with the deadline deliberately switched off, so a
+// stalled peer really does hold a worker for the whole test: what is guarded here
+// is that a shared queue drained by a fixed pool still reaches the healthy peer.
+// The companion test below covers what happens once stalled peers outnumber the
+// pool — that case needs deadlines, and nothing else can save it.
 func TestEngineKeepsServingHealthyPeersWhileOneStalls(t *testing.T) {
 	reg := transport.NewRegistry()
 
 	// The stalled peer is listed first, so its jobs are queued ahead of B's.
 	gate := newPartialGate(transport.NewInProcess("A", []string{"stalled", "B"}, reg), "stalled")
 	a := counter.NewGCounter("A")
-	ae := NewEngine(a, gate, decodeGCounter)
+	ae := NewEngine(a, gate)
+	ae.sendTimeout = neverTimeOut
 	t.Cleanup(func() { _ = ae.Stop() })
 	t.Cleanup(gate.open) // LIFO: the gate opens before Stop waits on the workers
 
@@ -303,6 +306,84 @@ func TestEngineKeepsServingHealthyPeersWhileOneStalls(t *testing.T) {
 	waitFor(t, "B to be served while another peer is stalled", func() bool {
 		return b.replica.Value() == 9
 	}, func() string { return fmt.Sprintf("B=%d", b.replica.Value()) })
+}
+
+// Head-of-line starvation, the version no amount of queue fairness can fix: each
+// unreachable peer occupies a worker for as long as it stays unreachable, and it
+// occupies TWO of them (its push job and its pull job), so workerCount/2 dead
+// peers park the entire pool and the healthy peer is never reached at all.
+//
+// A per-send deadline is the only thing that breaks this: a worker must come back
+// on its own, without the peer's cooperation. Give the pool more stalled peers
+// than it has workers and check the healthy one is still served.
+func TestEngineKeepsServingWhenStalledPeersOutnumberTheWorkers(t *testing.T) {
+	reg := transport.NewRegistry()
+
+	stalled := make([]string, 0, workerCount)
+	for i := range workerCount {
+		stalled = append(stalled, fmt.Sprintf("stalled-%d", i))
+	}
+	// Stalled peers first: their jobs are queued ahead of B's, so every worker
+	// picks one of them before B's job is reachable.
+	peers := append(append([]string{}, stalled...), "B")
+
+	gate := newPartialGate(transport.NewInProcess("A", peers, reg), stalled...)
+	a := counter.NewGCounter("A")
+	ae := NewEngine(a, gate)
+	ae.sendTimeout = 20 * tick // short enough that several deadline cycles fit in waitDeadline
+	t.Cleanup(func() { _ = ae.Stop() })
+	t.Cleanup(gate.open)
+
+	b := newNode(t, reg, "B")
+	b.start(t)
+
+	a.IncrementBy(9)
+	if err := ae.Start(tick); err != nil {
+		t.Fatalf("start A: %v", err)
+	}
+
+	waitFor(t, "B to be served although every worker is stuck on a dead peer", func() bool {
+		return b.replica.Value() == 9
+	}, func() string { return fmt.Sprintf("B=%d", b.replica.Value()) })
+}
+
+// A send killed by its own deadline is a failed send: the snapshot it carried was
+// already drained out of the replica, so it has to go back into the peer's buffer
+// exactly as it does on a transport error. Nothing is incremented after the wire
+// heals — only retention can still deliver.
+func TestEngineRetainsDeltaWhenASendTimesOut(t *testing.T) {
+	reg := transport.NewRegistry()
+
+	gate := newGatedLink(transport.NewInProcess("A", []string{"B"}, reg))
+	a := counter.NewGCounter("A")
+	ae := NewEngine(a, gate)
+	ae.sendTimeout = 20 * tick
+	t.Cleanup(func() { _ = ae.Stop() })
+	t.Cleanup(gate.open)
+
+	// B has no peers of its own: it never Pulls A, so A's retained push is the
+	// only route by which the increment can reach it.
+	b := newNode(t, reg, "B")
+	b.start(t)
+
+	a.IncrementBy(5)
+	if err := ae.Start(tick); err != nil {
+		t.Fatalf("start A: %v", err)
+	}
+
+	// Two attempts means at least one send has certainly been killed by its
+	// deadline and its round has moved on.
+	waitFor(t, "a send to be abandoned on its deadline", func() bool {
+		return gate.attempts.Load() >= 2
+	})
+	if got := b.replica.Value(); got != 0 {
+		t.Fatalf("B saw %d while every send to it was timing out, want 0", got)
+	}
+
+	gate.open()
+	waitFor(t, "B to receive the delta retained across the timeouts", func() bool {
+		return b.replica.Value() == 5
+	})
 }
 
 // --- catch-up after state loss -----------------------------------------------
@@ -329,12 +410,52 @@ func TestEngineCatchesUpAfterRestart(t *testing.T) {
 		t.Fatalf("stop B: %v", err)
 	}
 
-	// B comes back under the same id with an empty in-memory replica.
-	restarted := newNode(t, reg, "B", "A")
+	// B comes back at the same address with an empty in-memory replica and a fresh
+	// incarnation id — that is what a restart looks like here.
+	restarted := newNodeAs(t, reg, "B", "B#2", "A")
 	restarted.start(t)
 
 	waitFor(t, "the restarted B to catch up to 5", func() bool {
 		return restarted.replica.Value() == 5
+	})
+}
+
+// Why the replica id is an incarnation and not the node id.
+//
+// A restarted node comes back with an empty state, and its own entry in the
+// lattice is the one thing no peer can correct for it: the join takes the maximum
+// per key, so an update made under a reused id BEFORE the catch-up lands is not
+// merged, it is silently eaten — max(1, 2) = 2. A fresh id makes it a new key
+// that nothing can shadow.
+//
+// This test increments before Start on purpose: that is the window, and doing it
+// there makes it deterministic instead of a race the test would usually lose.
+func TestEngineNewIncarnationKeepsAnUpdateMadeBeforeCatchUp(t *testing.T) {
+	reg := transport.NewRegistry()
+	a := newNode(t, reg, "A", "B")
+	b := newNode(t, reg, "B", "A")
+	a.start(t)
+	b.start(t)
+
+	a.replica.IncrementBy(3)
+	b.replica.IncrementBy(2)
+	waitFor(t, "the pair to converge on 5", func() bool {
+		return a.replica.Value() == 5 && b.replica.Value() == 5
+	})
+
+	if err := b.engine.Stop(); err != nil {
+		t.Fatalf("stop B: %v", err)
+	}
+
+	restarted := newNodeAs(t, reg, "B", "B#2", "A")
+	restarted.replica.Increment() // before any catch-up: the dangerous window
+	restarted.start(t)
+
+	waitFor(t, "the cluster to reach 6 — the pre-catch-up increment must survive", func() bool {
+		return restarted.replica.Value() == 6 && a.replica.Value() == 6
+	}, func() string {
+		return fmt.Sprintf("A=%d B#2=%d (5 means the increment was swallowed by the join)",
+			a.replica.Value(), restarted.replica.Value())
 	})
 }
 
@@ -347,7 +468,7 @@ func TestEngineAnswersPullWithFullState(t *testing.T) {
 	a.replica.IncrementBy(7)
 
 	p := newProbe(t, reg, "probe", "A")
-	if err := p.tr.Send("A", transport.Message{From: "probe", Kind: transport.Pull}); err != nil {
+	if err := p.send("A", transport.Message{From: "probe", Kind: transport.Pull}); err != nil {
 		t.Fatalf("A rejected a Pull: %v", err)
 	}
 
@@ -376,7 +497,7 @@ func TestEngineAnswersPullWithFullState(t *testing.T) {
 // replica's keys: deltas only carry keys their sender mutated.
 func TestEnginePullSurvivesAFullSendQueue(t *testing.T) {
 	tr := newManyPeers(150) // 150 peers vs a 100-slot queue: one round cannot cover them all
-	e := NewEngine(counter.NewGCounter("A"), tr, decodeGCounter)
+	e := NewEngine(counter.NewGCounter("A"), tr)
 	t.Cleanup(func() { _ = e.Stop() })
 
 	if err := e.Start(tick); err != nil {
@@ -416,7 +537,7 @@ func TestEngineStop(t *testing.T) {
 	// silently drops those deltas.
 	t.Run("releases a round blocked on a full send queue", func(t *testing.T) {
 		// Workers are deliberately not started — nothing drains the queue.
-		e := NewEngine(counter.NewGCounter("A"), newManyPeers(150), decodeGCounter)
+		e := NewEngine(counter.NewGCounter("A"), newManyPeers(150))
 
 		returned := make(chan struct{})
 		go func() {
@@ -431,6 +552,43 @@ func TestEngineStop(t *testing.T) {
 		case <-returned:
 		case <-time.After(waitDeadline):
 			t.Fatalf("round() still blocked %v after Stop", waitDeadline)
+		}
+	})
+
+	// Stop waits for the workers, so a worker parked inside a Send holds shutdown
+	// hostage for exactly as long as the peer chooses. Cancelling the engine's
+	// context has to reach into the transport and abort the send in progress —
+	// note the gate is never opened here, so nothing else can release it, and the
+	// deadline is set past the test's own patience so it cannot be the rescuer.
+	t.Run("releases a send parked in the transport", func(t *testing.T) {
+		reg := transport.NewRegistry()
+		gate := newGatedLink(transport.NewInProcess("A", []string{"B"}, reg))
+		a := counter.NewGCounter("A")
+		ae := NewEngine(a, gate)
+		ae.sendTimeout = neverTimeOut
+		t.Cleanup(gate.open) // only so a failing run cannot wedge the suite
+
+		b := newNode(t, reg, "B")
+		b.start(t)
+
+		a.IncrementBy(1)
+		if err := ae.Start(tick); err != nil {
+			t.Fatalf("start A: %v", err)
+		}
+		waitFor(t, "a send to park inside the transport", func() bool {
+			return gate.parked.Load() > 0
+		})
+
+		stopped := make(chan error, 1)
+		go func() { stopped <- ae.Stop() }()
+
+		select {
+		case err := <-stopped:
+			if err != nil {
+				t.Fatalf("Stop: %v", err)
+			}
+		case <-time.After(waitDeadline):
+			t.Fatalf("Stop still waiting after %v: cancellation never reached the parked send", waitDeadline)
 		}
 	})
 }

@@ -5,6 +5,8 @@
 // used by the deterministic convergence tests).
 package transport
 
+import "context"
+
 // Kind tags what a message asks the receiver to do.
 type Kind uint8
 
@@ -30,7 +32,7 @@ type Message struct {
 
 // Handler consumes an inbound message. The engine registers one via Serve, and
 // the transport calls it once per received message.
-type Handler func(Message) error
+type Handler func(ctx context.Context, m Message) error
 
 // Transport is a node's link to its peers. Implementations must tolerate Send
 // being called from several goroutines at once (the gossip loop and an inbound
@@ -40,7 +42,7 @@ type Transport interface {
 	// wait for or return an application reply (a Pull's answer arrives later as a
 	// separate inbound Push). It returns an error only if the message could not
 	// be handed off (unknown peer, network failure).
-	Send(peerID string, m Message) error
+	Send(ctx context.Context, peerID string, m Message) error
 
 	ID() string
 
