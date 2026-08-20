@@ -1,4 +1,4 @@
-package engine
+package artel_test
 
 import (
 	"context"
@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kudesn1k1/artel"
 	"github.com/kudesn1k1/artel/transport"
-	"github.com/kudesn1k1/artel/types/delta/counter"
 )
 
 // Behavioural spec for the Algorithm-1 anti-entropy engine, driven over the
@@ -16,9 +16,10 @@ import (
 //
 // Every assertion about what a peer ended up with is EVENTUAL — the engine is
 // asynchronous by design and is not reshaped to make tests deterministic. Tests
-// reach into the package (they are in `package engine`) only for round() and the
-// constructor; everything else goes through the public surface and the Transport
-// interface, so they survive refactors of the engine's internals.
+// live in the external artel_test package and reach the internals only through
+// the export_test.go bridges (Round, SetSendTimeout, WorkerCount); everything
+// else goes through the public surface and the Transport interface, so they
+// survive refactors of the engine's internals.
 //
 // The real network path (transport/http.go) is covered in transport/http_test.go.
 
@@ -113,9 +114,9 @@ func TestEngineKeepsConvergingAcrossRounds(t *testing.T) {
 func TestEngineConvergesWithPNCounter(t *testing.T) {
 	reg := transport.NewRegistry()
 
-	newPN := func(id string, peers ...string) *counter.PNCounter {
-		rep := counter.NewPNCounter(id)
-		e := NewEngine(rep, transport.NewInProcess(id, peers, reg))
+	newPN := func(id string, peers ...string) *artel.PNCounter {
+		rep := artel.NewPNCounter(id)
+		e := artel.NewEngine(rep, transport.NewInProcess(id, peers, reg))
 		t.Cleanup(func() { _ = e.Stop(context.Background()) })
 		if err := e.Start(context.Background(), tick); err != nil {
 			t.Fatalf("start %s: %v", id, err)
@@ -187,8 +188,8 @@ func TestEngineRetainsDeltaWhenSendFails(t *testing.T) {
 	reg := transport.NewRegistry()
 
 	link := &flakyLink{Transport: transport.NewInProcess("A", []string{"B"}, reg)}
-	a := counter.NewGCounter("A")
-	ae := NewEngine(a, link)
+	a := artel.NewGCounter("A")
+	ae := artel.NewEngine(a, link)
 	t.Cleanup(func() { _ = ae.Stop(context.Background()) })
 
 	// B has no peers of its own on purpose: it never Pulls A, so A's retained
@@ -223,8 +224,8 @@ func TestEngineDeliversToPeerThatJoinsLate(t *testing.T) {
 	// The wrapper is only here to count attempts — it never breaks the link;
 	// sends fail on their own because "B" is not registered yet.
 	link := &flakyLink{Transport: transport.NewInProcess("A", []string{"B"}, reg)}
-	a := counter.NewGCounter("A")
-	ae := NewEngine(a, link)
+	a := artel.NewGCounter("A")
+	ae := artel.NewEngine(a, link)
 	t.Cleanup(func() { _ = ae.Stop(context.Background()) })
 
 	if err := ae.Start(context.Background(), tick); err != nil {
@@ -249,9 +250,9 @@ func TestEngineKeepsDeltasFlushedWhileAPushIsInFlight(t *testing.T) {
 	reg := transport.NewRegistry()
 
 	gate := newGatedLink(transport.NewInProcess("A", []string{"B"}, reg))
-	a := counter.NewGCounter("A")
-	ae := NewEngine(a, gate)
-	ae.sendTimeout = neverTimeOut // this test is about a busy peer, not about deadlines
+	a := artel.NewGCounter("A")
+	ae := artel.NewEngine(a, gate)
+	ae.SetSendTimeout(neverTimeOut) // this test is about a busy peer, not about deadlines
 	t.Cleanup(func() { _ = ae.Stop(context.Background()) })
 	t.Cleanup(gate.open) // LIFO: the gate opens before Stop waits on the workers
 
@@ -290,9 +291,9 @@ func TestEngineKeepsServingHealthyPeersWhileOneStalls(t *testing.T) {
 
 	// The stalled peer is listed first, so its jobs are queued ahead of B's.
 	gate := newPartialGate(transport.NewInProcess("A", []string{"stalled", "B"}, reg), "stalled")
-	a := counter.NewGCounter("A")
-	ae := NewEngine(a, gate)
-	ae.sendTimeout = neverTimeOut
+	a := artel.NewGCounter("A")
+	ae := artel.NewEngine(a, gate)
+	ae.SetSendTimeout(neverTimeOut)
 	t.Cleanup(func() { _ = ae.Stop(context.Background()) })
 	t.Cleanup(gate.open) // LIFO: the gate opens before Stop waits on the workers
 
@@ -320,8 +321,8 @@ func TestEngineKeepsServingHealthyPeersWhileOneStalls(t *testing.T) {
 func TestEngineKeepsServingWhenStalledPeersOutnumberTheWorkers(t *testing.T) {
 	reg := transport.NewRegistry()
 
-	stalled := make([]string, 0, workerCount)
-	for i := range workerCount {
+	stalled := make([]string, 0, artel.WorkerCount)
+	for i := range artel.WorkerCount {
 		stalled = append(stalled, fmt.Sprintf("stalled-%d", i))
 	}
 	// Stalled peers first: their jobs are queued ahead of B's, so every worker
@@ -329,9 +330,9 @@ func TestEngineKeepsServingWhenStalledPeersOutnumberTheWorkers(t *testing.T) {
 	peers := append(append([]string{}, stalled...), "B")
 
 	gate := newPartialGate(transport.NewInProcess("A", peers, reg), stalled...)
-	a := counter.NewGCounter("A")
-	ae := NewEngine(a, gate)
-	ae.sendTimeout = 20 * tick // short enough that several deadline cycles fit in waitDeadline
+	a := artel.NewGCounter("A")
+	ae := artel.NewEngine(a, gate)
+	ae.SetSendTimeout(20 * tick) // short enough that several deadline cycles fit in waitDeadline
 	t.Cleanup(func() { _ = ae.Stop(context.Background()) })
 	t.Cleanup(gate.open)
 
@@ -356,9 +357,9 @@ func TestEngineRetainsDeltaWhenASendTimesOut(t *testing.T) {
 	reg := transport.NewRegistry()
 
 	gate := newGatedLink(transport.NewInProcess("A", []string{"B"}, reg))
-	a := counter.NewGCounter("A")
-	ae := NewEngine(a, gate)
-	ae.sendTimeout = 20 * tick
+	a := artel.NewGCounter("A")
+	ae := artel.NewEngine(a, gate)
+	ae.SetSendTimeout(20 * tick)
 	t.Cleanup(func() { _ = ae.Stop(context.Background()) })
 	t.Cleanup(gate.open)
 
@@ -485,7 +486,7 @@ func TestEngineAnswersPullWithFullState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("A's Push payload does not decode: %v", err)
 	}
-	mirror := counter.NewGCounter("mirror")
+	mirror := artel.NewGCounter("mirror")
 	mirror.Merge(state)
 	if got := mirror.Value(); got != 7 {
 		t.Fatalf("Pull answered with a state worth %d, want A's full state 7", got)
@@ -498,7 +499,7 @@ func TestEngineAnswersPullWithFullState(t *testing.T) {
 // replica's keys: deltas only carry keys their sender mutated.
 func TestEnginePullSurvivesAFullSendQueue(t *testing.T) {
 	tr := newManyPeers(150) // 150 peers vs a 100-slot queue: one round cannot cover them all
-	e := NewEngine(counter.NewGCounter("A"), tr)
+	e := artel.NewEngine(artel.NewGCounter("A"), tr)
 	t.Cleanup(func() { _ = e.Stop(context.Background()) })
 
 	if err := e.Start(context.Background(), tick); err != nil {
@@ -538,11 +539,11 @@ func TestEngineStop(t *testing.T) {
 	// silently drops those deltas.
 	t.Run("releases a round blocked on a full send queue", func(t *testing.T) {
 		// Workers are deliberately not started — nothing drains the queue.
-		e := NewEngine(counter.NewGCounter("A"), newManyPeers(150))
+		e := artel.NewEngine(artel.NewGCounter("A"), newManyPeers(150))
 
 		returned := make(chan struct{})
 		go func() {
-			e.round()
+			e.Round()
 			close(returned)
 		}()
 
@@ -564,9 +565,9 @@ func TestEngineStop(t *testing.T) {
 	t.Run("releases a send parked in the transport", func(t *testing.T) {
 		reg := transport.NewRegistry()
 		gate := newGatedLink(transport.NewInProcess("A", []string{"B"}, reg))
-		a := counter.NewGCounter("A")
-		ae := NewEngine(a, gate)
-		ae.sendTimeout = neverTimeOut
+		a := artel.NewGCounter("A")
+		ae := artel.NewEngine(a, gate)
+		ae.SetSendTimeout(neverTimeOut)
 		t.Cleanup(gate.open) // only so a failing run cannot wedge the suite
 
 		b := newNode(t, reg, "B")

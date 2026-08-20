@@ -1,4 +1,4 @@
-package counter
+package artel
 
 import (
 	"encoding"
@@ -6,8 +6,6 @@ import (
 	"maps"
 	"sync"
 )
-
-import "github.com/kudesn1k1/artel/crdt"
 
 type PNCounter struct {
 	id    string
@@ -43,8 +41,8 @@ func (s *PNCounterState) UnmarshalBinary(data []byte) error {
 	return nil
 }
 
-var _ crdt.DeltaState[PNCounterState] = (*PNCounterState)(nil)
-var _ crdt.DeltaReplica[PNCounterState] = (*PNCounter)(nil)
+var _ DeltaState[PNCounterState] = (*PNCounterState)(nil)
+var _ DeltaReplica[PNCounterState] = (*PNCounter)(nil)
 
 func NewPNCounter(id string) *PNCounter {
 	return &PNCounter{

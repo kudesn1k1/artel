@@ -1,4 +1,15 @@
-package crdt
+// Package artel is a delta-state CRDT toolkit and anti-entropy engine.
+// (Interim package doc — the full one lands in doc.go.)
+package artel
+
+// StateReplica is a CRDT replica. State returns its convergent state — the
+// join-semilattice element that travels and merges — excluding replica-local
+// machinery. Merge folds an incoming state into the receiver in
+// place.
+type StateReplica[S any] interface {
+	State() S
+	Merge(other S)
+}
 
 // DeltaReplica is a delta-state CRDT replica. On top of the full-state contract
 // (State/Merge) it exposes the delta-group accumulated by local delta-mutations,

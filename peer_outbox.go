@@ -1,13 +1,12 @@
-package engine
+package artel
 
 import (
-	"github.com/kudesn1k1/artel/crdt"
 	"sync"
 )
 
 // peerOutbox represents a state of other peer we are communicating with. pending is a join-semilattice state waiting to be sent. It is cleared on send when pushInFlight is set to true and returned after in case of success or failure.
 // needsPull does not need such optimistic behavior so it is cleared on success
-type peerOutbox[S crdt.DeltaState[S]] struct {
+type peerOutbox[S DeltaState[S]] struct {
 	mu           sync.Mutex
 	pending      S
 	needsPull    bool

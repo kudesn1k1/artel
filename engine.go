@@ -1,11 +1,10 @@
-package engine
+package artel
 
 import (
 	"context"
 	"encoding"
 	"errors"
 	"fmt"
-	"github.com/kudesn1k1/artel/crdt"
 	"github.com/kudesn1k1/artel/transport"
 	"log/slog"
 	"sync"
@@ -13,7 +12,7 @@ import (
 )
 
 type State[S any] interface {
-	crdt.DeltaState[S]
+	DeltaState[S]
 	encoding.BinaryMarshaler
 }
 
@@ -31,7 +30,7 @@ type pullJob = string
 
 const workerCount = 8
 
-type Engine[S State[S], PS StatePtr[S], R crdt.DeltaReplica[S]] struct {
+type Engine[S State[S], PS StatePtr[S], R DeltaReplica[S]] struct {
 	local       R
 	transport   transport.Transport
 	peers       map[string]*peerOutbox[S]
@@ -47,7 +46,7 @@ type Engine[S State[S], PS StatePtr[S], R crdt.DeltaReplica[S]] struct {
 	stopOnce    sync.Once
 }
 
-func NewEngine[S State[S], PS StatePtr[S], R crdt.DeltaReplica[S]](local R, transport transport.Transport) *Engine[S, PS, R] {
+func NewEngine[S State[S], PS StatePtr[S], R DeltaReplica[S]](local R, transport transport.Transport) *Engine[S, PS, R] {
 	transportPeers := transport.Peers()
 	peers := make(map[string]*peerOutbox[S], len(transportPeers))
 	for _, peer := range transportPeers {

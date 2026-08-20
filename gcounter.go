@@ -1,4 +1,4 @@
-package counter
+package artel
 
 import (
 	"encoding"
@@ -6,8 +6,6 @@ import (
 	"maps"
 	"sync"
 )
-
-import "github.com/kudesn1k1/artel/crdt"
 
 type GCounter struct {
 	id    string
@@ -35,8 +33,8 @@ func (s *GCounterState) UnmarshalBinary(data []byte) error {
 var _ encoding.BinaryMarshaler = GCounterState{}
 var _ encoding.BinaryUnmarshaler = (*GCounterState)(nil)
 
-var _ crdt.DeltaState[GCounterState] = (*GCounterState)(nil)
-var _ crdt.DeltaReplica[GCounterState] = (*GCounter)(nil)
+var _ DeltaState[GCounterState] = (*GCounterState)(nil)
+var _ DeltaReplica[GCounterState] = (*GCounter)(nil)
 
 func NewGCounter(id string) *GCounter {
 	return &GCounter{

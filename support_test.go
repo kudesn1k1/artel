@@ -1,4 +1,4 @@
-package engine
+package artel_test
 
 import (
 	"context"
@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kudesn1k1/artel"
 	"github.com/kudesn1k1/artel/transport"
-	"github.com/kudesn1k1/artel/types/delta/counter"
 )
 
 // Test support for the anti-entropy engine.
@@ -37,15 +37,15 @@ const (
 // decodeGCounter turns a wire payload back into a state. The engine derives this
 // for itself from its type parameters; the tests need it to inspect payloads they
 // intercept on the wire.
-func decodeGCounter(b []byte) (counter.GCounterState, error) {
-	var s counter.GCounterState
+func decodeGCounter(b []byte) (artel.GCounterState, error) {
+	var s artel.GCounterState
 	if err := s.UnmarshalBinary(b); err != nil {
-		return counter.GCounterState{}, err
+		return artel.GCounterState{}, err
 	}
 	return s, nil
 }
 
-type gEngine = Engine[counter.GCounterState, *counter.GCounterState, *counter.GCounter]
+type gEngine = artel.Engine[artel.GCounterState, *artel.GCounterState, *artel.GCounter]
 
 // node is one replica + its transport + its engine.
 //
@@ -55,7 +55,7 @@ type gEngine = Engine[counter.GCounterState, *counter.GCounterState, *counter.GC
 type node struct {
 	nodeID    string
 	replicaID string
-	replica   *counter.GCounter
+	replica   *artel.GCounter
 	engine    *gEngine
 }
 
@@ -70,8 +70,8 @@ func newNode(t *testing.T, reg *transport.Registry, id string, peers ...string) 
 // what a restart actually looks like: same address, new incarnation.
 func newNodeAs(t *testing.T, reg *transport.Registry, nodeID, replicaID string, peers ...string) *node {
 	t.Helper()
-	rep := counter.NewGCounter(replicaID)
-	e := NewEngine(rep, transport.NewInProcess(nodeID, peers, reg))
+	rep := artel.NewGCounter(replicaID)
+	e := artel.NewEngine(rep, transport.NewInProcess(nodeID, peers, reg))
 	t.Cleanup(func() { _ = e.Stop(context.Background()) })
 	return &node{nodeID: nodeID, replicaID: replicaID, replica: rep, engine: e}
 }

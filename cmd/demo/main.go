@@ -1,4 +1,4 @@
-// Command demo runs one replica of a crdtlab cluster: a delta-state G-Counter, an
+// Command demo runs one replica of a artel cluster: a delta-state G-Counter, an
 // anti-entropy engine gossiping over HTTP, a small control API, and a live view of
 // the replica's state in the terminal.
 //
@@ -29,9 +29,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kudesn1k1/artel/engine"
+	"github.com/kudesn1k1/artel"
 	"github.com/kudesn1k1/artel/transport"
-	"github.com/kudesn1k1/artel/types/delta/counter"
 )
 
 // peerFlag collects repeated --peer ID=URL flags into the transport's address book.
@@ -94,9 +93,9 @@ func run() error {
 		return err
 	}
 
-	replica := counter.NewGCounter(replicaID)
+	replica := artel.NewGCounter(replicaID)
 	wire := newWatchedTransport(transport.NewHTTP(*nodeID, *gossip, peers))
-	eng := engine.NewEngine(replica, wire)
+	eng := artel.NewEngine(replica, wire)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -182,7 +181,7 @@ func incarnation(nodeID string) (string, error) {
 // breakdown reads the per-replica contributions out of the state. GCounterState
 // marshals as exactly that map, so the demo can show it without the type having
 // to expose its internals.
-func breakdown(replica *counter.GCounter) map[string]uint64 {
+func breakdown(replica *artel.GCounter) map[string]uint64 {
 	raw, err := replica.State().MarshalBinary()
 	if err != nil {
 		return nil
@@ -194,7 +193,7 @@ func breakdown(replica *counter.GCounter) map[string]uint64 {
 	return m
 }
 
-func apiHandler(replica *counter.GCounter, nodeID, replicaID string) http.Handler {
+func apiHandler(replica *artel.GCounter, nodeID, replicaID string) http.Handler {
 	status := func(w http.ResponseWriter) {
 		raw, err := replica.State().MarshalBinary()
 		if err != nil {
