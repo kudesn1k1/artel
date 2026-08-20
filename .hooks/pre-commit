@@ -1,0 +1,10 @@
+#!/bin/sh
+# Reject the commit when any staged .go file is not gofmt-formatted.
+files=$(git diff --cached --name-only --diff-filter=ACMR -- '*.go')
+[ -z "$files" ] && exit 0
+unformatted=$(gofmt -l $files)
+if [ -n "$unformatted" ]; then
+  echo "gofmt needed on:" >&2
+  echo "$unformatted" >&2
+  exit 1
+fi
