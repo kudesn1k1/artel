@@ -7,7 +7,7 @@ import (
 	"sync"
 )
 
-import "crdtlab/crdt"
+import "github.com/kudesn1k1/artel/crdt"
 
 type GCounter struct {
 	id    string

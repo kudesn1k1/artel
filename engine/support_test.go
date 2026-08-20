@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"crdtlab/transport"
-	"crdtlab/types/delta/counter"
+	"github.com/kudesn1k1/artel/transport"
+	"github.com/kudesn1k1/artel/types/delta/counter"
 )
 
 // Test support for the anti-entropy engine.

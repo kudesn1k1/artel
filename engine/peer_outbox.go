@@ -1,7 +1,7 @@
 package engine
 
 import (
-	"crdtlab/crdt"
+	"github.com/kudesn1k1/artel/crdt"
 	"sync"
 )
 

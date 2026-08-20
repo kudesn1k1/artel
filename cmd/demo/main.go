@@ -29,9 +29,9 @@ import (
 	"strings"
 	"time"
 
-	"crdtlab/engine"
-	"crdtlab/transport"
-	"crdtlab/types/delta/counter"
+	"github.com/kudesn1k1/artel/engine"
+	"github.com/kudesn1k1/artel/transport"
+	"github.com/kudesn1k1/artel/types/delta/counter"
 )
 
 // peerFlag collects repeated --peer ID=URL flags into the transport's address book.

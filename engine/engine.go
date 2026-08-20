@@ -2,11 +2,11 @@ package engine
 
 import (
 	"context"
-	"crdtlab/crdt"
-	"crdtlab/transport"
 	"encoding"
 	"errors"
 	"fmt"
+	"github.com/kudesn1k1/artel/crdt"
+	"github.com/kudesn1k1/artel/transport"
 	"log/slog"
 	"sync"
 	"time"

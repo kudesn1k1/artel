@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"crdtlab/transport"
-	"crdtlab/types/delta/counter"
+	"github.com/kudesn1k1/artel/transport"
+	"github.com/kudesn1k1/artel/types/delta/counter"
 )
 
 // Behavioural spec for the Algorithm-1 anti-entropy engine, driven over the

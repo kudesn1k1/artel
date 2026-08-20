@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"crdtlab/transport"
+	"github.com/kudesn1k1/artel/transport"
 )
 
 // peerHealth is everything the dashboard says about one peer.
