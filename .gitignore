@@ -1,6 +1,7 @@
-# Local tooling / working notes — not shared in the repo
+# Local tooling / working notes — private by default; public docs are opted in explicitly
 .claude/
-docs/
+docs/*
+!docs/guarantees.md
 
 # IDE
 .idea/
