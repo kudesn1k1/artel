@@ -38,11 +38,13 @@ type Engine[S State[S], PS StatePtr[S], R crdt.DeltaReplica[S]] struct {
 	ticker      *time.Ticker
 	pushJobs    chan pushJob[S]
 	pullJobs    chan pullJob
+	sendTimeout time.Duration
 	wg          sync.WaitGroup
 	log         *slog.Logger
 	ctx         context.Context
 	ctxCancel   context.CancelFunc
-	sendTimeout time.Duration
+	stopped     chan struct{}
+	stopOnce    sync.Once
 }
 
 func NewEngine[S State[S], PS StatePtr[S], R crdt.DeltaReplica[S]](local R, transport transport.Transport) *Engine[S, PS, R] {
@@ -52,8 +54,6 @@ func NewEngine[S State[S], PS StatePtr[S], R crdt.DeltaReplica[S]](local R, tran
 		peers[peer] = &peerOutbox[S]{}
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-
 	return &Engine[S, PS, R]{
 		local:       local,
 		transport:   transport,
@@ -61,13 +61,12 @@ func NewEngine[S State[S], PS StatePtr[S], R crdt.DeltaReplica[S]](local R, tran
 		pushJobs:    make(chan pushJob[S], 100), // TODO: review send jobs count
 		pullJobs:    make(chan pullJob, 100),    // TODO: review send jobs count
 		log:         slog.Default(),
-		ctx:         ctx,
-		ctxCancel:   cancel,
 		sendTimeout: 2 * time.Second,
+		stopped:     make(chan struct{}),
 	}
 }
 
-func (e *Engine[S, PS, R]) Serve() error {
+func (e *Engine[S, PS, R]) serve() error {
 	if err := e.transport.Serve(e.consume); err != nil {
 		return err
 	}
@@ -79,10 +78,13 @@ func (e *Engine[S, PS, R]) Serve() error {
 	return nil
 }
 
-func (e *Engine[S, PS, R]) Start(interval time.Duration) error {
-	if err := e.Serve(); err != nil {
+func (e *Engine[S, PS, R]) Start(ctx context.Context, interval time.Duration) error {
+	if err := e.serve(); err != nil {
 		return err
 	}
+
+	e.ctx, e.ctxCancel = context.WithCancel(ctx)
+
 	e.ticker = time.NewTicker(interval)
 	e.wg.Go(func() {
 		for {
@@ -99,24 +101,45 @@ func (e *Engine[S, PS, R]) Start(interval time.Duration) error {
 		e.wg.Go(e.sendLoop)
 	}
 
+	go func() {
+		e.wg.Wait()
+		e.stopOnce.Do(func() {
+			close(e.stopped)
+		})
+	}()
+
 	e.round()
 
 	return nil
 }
 
-func (e *Engine[S, PS, R]) Stop() error {
+func (e *Engine[S, PS, R]) Stop(ctx context.Context) error {
 	if e.ticker != nil {
 		e.ticker.Stop()
 	}
+	if e.ctx == nil {
+		e.stopOnce.Do(func() {
+			close(e.stopped)
+		})
 
-	e.ctxCancel()
-	//TODO: consider returning pending jobs to buffer
-	e.wg.Wait()
-
-	if err := e.transport.Close(); err != nil {
-		return err
+		return e.transport.Close()
 	}
-	return nil
+	e.ctxCancel()
+
+	closeErr := e.transport.Close()
+
+	//TODO: consider returning pending jobs to buffer
+
+	select {
+	case <-e.stopped:
+		return closeErr
+	case <-ctx.Done():
+		return errors.Join(closeErr, ctx.Err())
+	}
+}
+
+func (e *Engine[S, PS, R]) Stopped() <-chan struct{} {
+	return e.stopped
 }
 
 func (e *Engine[S, PS, R]) consume(ctx context.Context, m transport.Message) error {
@@ -222,8 +245,10 @@ func (e *Engine[S, PS, R]) handlePush(job pushJob[S]) {
 	ctx, cancel := context.WithTimeout(e.ctx, e.sendTimeout)
 	defer cancel()
 
-	if err := e.transport.Send(ctx, job.peerId, msg); err != nil && !errors.Is(err, context.Canceled) {
-		e.log.Error("failed to send push job", "peer", job.peerId, "err", err)
+	if err := e.transport.Send(ctx, job.peerId, msg); err != nil {
+		if !errors.Is(err, context.Canceled) {
+			e.log.Error("failed to send push job", "peer", job.peerId, "err", err)
+		}
 		e.peers[job.peerId].pushFailed(job.snapshot)
 		return
 	}
@@ -239,8 +264,10 @@ func (e *Engine[S, PS, R]) handlePull(job pullJob) {
 	ctx, cancel := context.WithTimeout(e.ctx, e.sendTimeout)
 	defer cancel()
 
-	if err := e.transport.Send(ctx, job, msg); err != nil && !errors.Is(err, context.Canceled) {
-		e.log.Error("failed to send pull job", "peer", job, "err", err)
+	if err := e.transport.Send(ctx, job, msg); err != nil {
+		if !errors.Is(err, context.Canceled) {
+			e.log.Error("failed to send pull job", "peer", job, "err", err)
+		}
 		e.peers[job].pullFailed()
 		return
 	}

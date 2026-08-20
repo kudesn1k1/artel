@@ -98,10 +98,21 @@ func run() error {
 	wire := newWatchedTransport(transport.NewHTTP(*nodeID, *gossip, peers))
 	eng := engine.NewEngine(replica, wire)
 
-	if err := eng.Start(*interval); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	if err := eng.Start(ctx, *interval); err != nil {
 		return fmt.Errorf("starting the engine: %w", err)
 	}
-	defer func() { _ = eng.Stop() }()
+	// The signal context is already cancelled by the time this defer runs, so the
+	// drain gets its own deadline.
+	defer func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := eng.Stop(stopCtx); err != nil {
+			slog.Warn("engine did not stop cleanly", "err", err)
+		}
+	}()
 
 	api := &http.Server{
 		Addr:              *apiAddr,
@@ -118,9 +129,6 @@ func run() error {
 		defer cancel()
 		_ = api.Shutdown(ctx)
 	}()
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
 
 	dash := &dashboard{out: os.Stdout, plain: *plain}
 	frames := time.NewTicker(*refresh)

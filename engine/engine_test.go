@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
@@ -115,8 +116,8 @@ func TestEngineConvergesWithPNCounter(t *testing.T) {
 	newPN := func(id string, peers ...string) *counter.PNCounter {
 		rep := counter.NewPNCounter(id)
 		e := NewEngine(rep, transport.NewInProcess(id, peers, reg))
-		t.Cleanup(func() { _ = e.Stop() })
-		if err := e.Start(tick); err != nil {
+		t.Cleanup(func() { _ = e.Stop(context.Background()) })
+		if err := e.Start(context.Background(), tick); err != nil {
 			t.Fatalf("start %s: %v", id, err)
 		}
 		return rep
@@ -155,7 +156,7 @@ func TestEngineStartsConcurrently(t *testing.T) {
 	errs := make(chan error, len(nodes))
 	var wg sync.WaitGroup
 	for _, n := range nodes {
-		wg.Go(func() { errs <- n.engine.Start(tick) })
+		wg.Go(func() { errs <- n.engine.Start(context.Background(), tick) })
 	}
 	wg.Wait()
 	close(errs)
@@ -188,7 +189,7 @@ func TestEngineRetainsDeltaWhenSendFails(t *testing.T) {
 	link := &flakyLink{Transport: transport.NewInProcess("A", []string{"B"}, reg)}
 	a := counter.NewGCounter("A")
 	ae := NewEngine(a, link)
-	t.Cleanup(func() { _ = ae.Stop() })
+	t.Cleanup(func() { _ = ae.Stop(context.Background()) })
 
 	// B has no peers of its own on purpose: it never Pulls A, so A's retained
 	// push is the ONLY route by which the increment can reach it.
@@ -196,7 +197,7 @@ func TestEngineRetainsDeltaWhenSendFails(t *testing.T) {
 	b.start(t)
 
 	link.broken.Store(true)
-	if err := ae.Start(tick); err != nil {
+	if err := ae.Start(context.Background(), tick); err != nil {
 		t.Fatalf("start A: %v", err)
 	}
 
@@ -224,9 +225,9 @@ func TestEngineDeliversToPeerThatJoinsLate(t *testing.T) {
 	link := &flakyLink{Transport: transport.NewInProcess("A", []string{"B"}, reg)}
 	a := counter.NewGCounter("A")
 	ae := NewEngine(a, link)
-	t.Cleanup(func() { _ = ae.Stop() })
+	t.Cleanup(func() { _ = ae.Stop(context.Background()) })
 
-	if err := ae.Start(tick); err != nil {
+	if err := ae.Start(context.Background(), tick); err != nil {
 		t.Fatalf("start A: %v", err)
 	}
 	a.IncrementBy(4)
@@ -251,7 +252,7 @@ func TestEngineKeepsDeltasFlushedWhileAPushIsInFlight(t *testing.T) {
 	a := counter.NewGCounter("A")
 	ae := NewEngine(a, gate)
 	ae.sendTimeout = neverTimeOut // this test is about a busy peer, not about deadlines
-	t.Cleanup(func() { _ = ae.Stop() })
+	t.Cleanup(func() { _ = ae.Stop(context.Background()) })
 	t.Cleanup(gate.open) // LIFO: the gate opens before Stop waits on the workers
 
 	// B has no peers: it never Pulls, so A's pushes are the only route to it.
@@ -259,7 +260,7 @@ func TestEngineKeepsDeltasFlushedWhileAPushIsInFlight(t *testing.T) {
 	b.start(t)
 
 	a.IncrementBy(1)
-	if err := ae.Start(tick); err != nil {
+	if err := ae.Start(context.Background(), tick); err != nil {
 		t.Fatalf("start A: %v", err)
 	}
 
@@ -292,14 +293,14 @@ func TestEngineKeepsServingHealthyPeersWhileOneStalls(t *testing.T) {
 	a := counter.NewGCounter("A")
 	ae := NewEngine(a, gate)
 	ae.sendTimeout = neverTimeOut
-	t.Cleanup(func() { _ = ae.Stop() })
+	t.Cleanup(func() { _ = ae.Stop(context.Background()) })
 	t.Cleanup(gate.open) // LIFO: the gate opens before Stop waits on the workers
 
 	b := newNode(t, reg, "B")
 	b.start(t)
 
 	a.IncrementBy(9)
-	if err := ae.Start(tick); err != nil {
+	if err := ae.Start(context.Background(), tick); err != nil {
 		t.Fatalf("start A: %v", err)
 	}
 
@@ -331,14 +332,14 @@ func TestEngineKeepsServingWhenStalledPeersOutnumberTheWorkers(t *testing.T) {
 	a := counter.NewGCounter("A")
 	ae := NewEngine(a, gate)
 	ae.sendTimeout = 20 * tick // short enough that several deadline cycles fit in waitDeadline
-	t.Cleanup(func() { _ = ae.Stop() })
+	t.Cleanup(func() { _ = ae.Stop(context.Background()) })
 	t.Cleanup(gate.open)
 
 	b := newNode(t, reg, "B")
 	b.start(t)
 
 	a.IncrementBy(9)
-	if err := ae.Start(tick); err != nil {
+	if err := ae.Start(context.Background(), tick); err != nil {
 		t.Fatalf("start A: %v", err)
 	}
 
@@ -358,7 +359,7 @@ func TestEngineRetainsDeltaWhenASendTimesOut(t *testing.T) {
 	a := counter.NewGCounter("A")
 	ae := NewEngine(a, gate)
 	ae.sendTimeout = 20 * tick
-	t.Cleanup(func() { _ = ae.Stop() })
+	t.Cleanup(func() { _ = ae.Stop(context.Background()) })
 	t.Cleanup(gate.open)
 
 	// B has no peers of its own: it never Pulls A, so A's retained push is the
@@ -367,7 +368,7 @@ func TestEngineRetainsDeltaWhenASendTimesOut(t *testing.T) {
 	b.start(t)
 
 	a.IncrementBy(5)
-	if err := ae.Start(tick); err != nil {
+	if err := ae.Start(context.Background(), tick); err != nil {
 		t.Fatalf("start A: %v", err)
 	}
 
@@ -406,7 +407,7 @@ func TestEngineCatchesUpAfterRestart(t *testing.T) {
 		return a.replica.Value() == 5 && b.replica.Value() == 5
 	})
 
-	if err := b.engine.Stop(); err != nil {
+	if err := b.engine.Stop(context.Background()); err != nil {
 		t.Fatalf("stop B: %v", err)
 	}
 
@@ -443,7 +444,7 @@ func TestEngineNewIncarnationKeepsAnUpdateMadeBeforeCatchUp(t *testing.T) {
 		return a.replica.Value() == 5 && b.replica.Value() == 5
 	})
 
-	if err := b.engine.Stop(); err != nil {
+	if err := b.engine.Stop(context.Background()); err != nil {
 		t.Fatalf("stop B: %v", err)
 	}
 
@@ -498,9 +499,9 @@ func TestEngineAnswersPullWithFullState(t *testing.T) {
 func TestEnginePullSurvivesAFullSendQueue(t *testing.T) {
 	tr := newManyPeers(150) // 150 peers vs a 100-slot queue: one round cannot cover them all
 	e := NewEngine(counter.NewGCounter("A"), tr)
-	t.Cleanup(func() { _ = e.Stop() })
+	t.Cleanup(func() { _ = e.Stop(context.Background()) })
 
-	if err := e.Start(tick); err != nil {
+	if err := e.Start(context.Background(), tick); err != nil {
 		t.Fatalf("start: %v", err)
 	}
 
@@ -523,10 +524,10 @@ func TestEngineStop(t *testing.T) {
 		n := newNode(t, reg, "A")
 		n.start(t)
 
-		if err := n.engine.Stop(); err != nil {
+		if err := n.engine.Stop(context.Background()); err != nil {
 			t.Fatalf("first Stop: %v", err)
 		}
-		if err := n.engine.Stop(); err != nil {
+		if err := n.engine.Stop(context.Background()); err != nil {
 			t.Fatalf("second Stop: %v", err)
 		}
 	})
@@ -545,7 +546,7 @@ func TestEngineStop(t *testing.T) {
 			close(returned)
 		}()
 
-		if err := e.Stop(); err != nil {
+		if err := e.Stop(context.Background()); err != nil {
 			t.Fatalf("stop: %v", err)
 		}
 		select {
@@ -572,7 +573,7 @@ func TestEngineStop(t *testing.T) {
 		b.start(t)
 
 		a.IncrementBy(1)
-		if err := ae.Start(tick); err != nil {
+		if err := ae.Start(context.Background(), tick); err != nil {
 			t.Fatalf("start A: %v", err)
 		}
 		waitFor(t, "a send to park inside the transport", func() bool {
@@ -580,7 +581,7 @@ func TestEngineStop(t *testing.T) {
 		})
 
 		stopped := make(chan error, 1)
-		go func() { stopped <- ae.Stop() }()
+		go func() { stopped <- ae.Stop(context.Background()) }()
 
 		select {
 		case err := <-stopped:

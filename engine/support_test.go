@@ -72,13 +72,13 @@ func newNodeAs(t *testing.T, reg *transport.Registry, nodeID, replicaID string, 
 	t.Helper()
 	rep := counter.NewGCounter(replicaID)
 	e := NewEngine(rep, transport.NewInProcess(nodeID, peers, reg))
-	t.Cleanup(func() { _ = e.Stop() })
+	t.Cleanup(func() { _ = e.Stop(context.Background()) })
 	return &node{nodeID: nodeID, replicaID: replicaID, replica: rep, engine: e}
 }
 
 func (n *node) start(t *testing.T) {
 	t.Helper()
-	if err := n.engine.Start(tick); err != nil {
+	if err := n.engine.Start(context.Background(), tick); err != nil {
 		t.Fatalf("start %s: %v", n.nodeID, err)
 	}
 }
