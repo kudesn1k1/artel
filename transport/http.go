@@ -122,5 +122,10 @@ func (t *HTTP) Close() error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	return t.server.Shutdown(ctx)
+	err := t.server.Shutdown(ctx)
+	if errors.Is(err, context.DeadlineExceeded) {
+		t.log.Warn("gossip server shutdown timed out", "node", t.id, "err", err)
+		return t.server.Close()
+	}
+	return err
 }

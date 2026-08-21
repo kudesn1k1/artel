@@ -249,6 +249,36 @@ func TestHTTPCloseStopsServing(t *testing.T) {
 	t.Fatal("B kept accepting gossip after Close")
 }
 
+// http.Server.Shutdown never closes a connection that was accepted but has not
+// sent a single byte yet (StateNew): it waits for a request to arrive or for
+// ReadHeaderTimeout — longer than Close's graceful budget. Such connections
+// occur in normal operation: under contention the HTTP client dials a spare
+// connection and pools it without ever writing a request. Close must survive
+// one, not surface it as a failed shutdown.
+func TestHTTPCloseSurvivesASilentConnection(t *testing.T) {
+	addrB := freeAddr(t)
+	b := serveRecorder(t, "B", addrB, nil)
+
+	// Plant the silent connection: dialled, accepted, never written to.
+	silent, err := net.Dial("tcp", addrB)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = silent.Close() })
+
+	// A completed request over a LATER connection proves the accept loop has
+	// taken the silent one: a single loop accepts in arrival order.
+	a := NewHTTP("A", freeAddr(t), map[string]string{"B": "http://" + addrB})
+	t.Cleanup(func() { _ = a.Close() })
+	if err := a.Send(context.Background(), "B", artel.Message{From: "A", Kind: artel.KindPush, Payload: []byte("{}")}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+
+	if err := b.tr.Close(); err != nil {
+		t.Fatalf("Close with a silent connection open: %v", err)
+	}
+}
+
 // --- context ------------------------------------------------------------------
 
 // The engine cancels its context to shut down, and a worker parked in Send is
