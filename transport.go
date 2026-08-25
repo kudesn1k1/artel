@@ -1,6 +1,9 @@
 package artel
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
 // Kind tags what a message asks the receiver to do.
 type Kind uint8
@@ -16,6 +19,17 @@ const (
 	// join; each peer answers with a push of its current state.
 	KindPull
 )
+
+func (k Kind) String() string {
+	switch k {
+	case KindPush:
+		return "push"
+	case KindPull:
+		return "pull"
+	default:
+		return fmt.Sprintf("Kind(%d)", k)
+	}
+}
 
 // Message is one gossip datagram. Payload is an OPAQUE serialized delta-state
 // (a state type's MarshalBinary output) — transports never interpret it.
