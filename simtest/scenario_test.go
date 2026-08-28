@@ -20,7 +20,7 @@ func testProfile() Profile {
 		OpGen: func(r *rand.Rand, node int) string {
 			return fmt.Sprintf("inc:%d", r.IntN(10)+1)
 		},
-		FaultKinds: []FaultKind{FaultDrop, FaultDelay, FaultDup, FaultPartition, FaultAckLie},
+		FaultKinds: []FaultKind{FaultDrop, FaultDelay, FaultDup, FaultPartition, FaultAckLost},
 		Interval:   10,
 		Horizon:    200,
 		Settle:     100,
@@ -29,11 +29,11 @@ func testProfile() Profile {
 
 // Profiles describe the space stress explores, and that space must stay
 // inside the delivery contract — a contract-violating network turns stress
-// findings into noise. Hand-written scenarios may use FaultBreakAck directly;
+// findings into noise. Hand-written scenarios may use FaultAckLie directly;
 // a profile listing it is a programmer error.
 func TestGenScenarioRejectsAContractViolatingProfile(t *testing.T) {
 	p := testProfile()
-	p.FaultKinds = append(p.FaultKinds, FaultBreakAck)
+	p.FaultKinds = append(p.FaultKinds, FaultAckLie)
 	defer func() {
 		if recover() == nil {
 			t.Fatal("GenScenario accepted a profile listing FaultBreakAck")
@@ -166,7 +166,7 @@ func TestGenScenarioStaysWithinTheProfile(t *testing.T) {
 			t.Fatalf("seed %d: %d faults > MaxFaults %d", seed, len(s.Faults), p.MaxFaults)
 		}
 		for i, f := range s.Faults {
-			if f.Kind == FaultBreakAck {
+			if f.Kind == FaultAckLie {
 				t.Fatalf("seed %d: generated the contract-violating FaultBreakAck", seed)
 			}
 			if f.At < 0 || f.Until <= f.At || f.Until > s.Horizon {
@@ -174,7 +174,7 @@ func TestGenScenarioStaysWithinTheProfile(t *testing.T) {
 					seed, i, f.At, f.Until, s.Horizon)
 			}
 			switch f.Kind {
-			case FaultDrop, FaultDup, FaultAckLie:
+			case FaultDrop, FaultDup, FaultAckLost:
 				if f.P <= 0 || f.P > 1 {
 					t.Fatalf("seed %d: fault %d (%s) has P=%v outside (0,1]", seed, i, f.Kind, f.P)
 				}

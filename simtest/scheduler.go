@@ -2,6 +2,7 @@ package simtest
 
 import (
 	"container/heap"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -17,6 +18,9 @@ type Result struct {
 type Violation struct {
 	Oracle, Detail string
 }
+
+var errDropped = errors.New("failed to deliver: dropped")
+var errAckLost = errors.New("failed to ack: lost")
 
 const drainCap = 10_000
 
@@ -67,6 +71,7 @@ func Run(s Scenario, sub Subject) Result {
 		seq++
 	}
 
+	fo := newFaultPolicy(s.Seed, s.Faults)
 	emitSend := func(at Dur, from string, envs []artel.Envelope) {
 		for _, envelope := range envs {
 			res.Trace.add(toEvent(queuedEvent{
@@ -77,15 +82,57 @@ func Run(s Scenario, sub Subject) Result {
 				msg:  envelope.Msg,
 			}))
 
-			heap.Push(q, queuedEvent{
-				at:   at + 1, //TODO: anomalies handling
-				seq:  seq,
-				kind: EventDeliver,
-				node: envelope.To,
-				peer: from,
-				msg:  envelope.Msg,
-			})
-			seq++
+			dels := fo.fate(from, envelope.To, at)
+			if len(dels) > 1 {
+				res.Trace.add(Event{
+					T:       at,
+					Kind:    EventDup,
+					Node:    from,
+					Peer:    envelope.To,
+					MsgKind: envelope.Msg.Kind.String(),
+					Size:    len(envelope.Msg.Payload),
+				})
+			}
+
+			for i, del := range dels {
+				if del.delivered {
+					heap.Push(q, queuedEvent{
+						at:         at + max(1, del.delay),
+						seq:        seq,
+						kind:       EventDeliver,
+						node:       envelope.To,
+						peer:       from,
+						msg:        envelope.Msg,
+						ack:        del.acked,
+						sendResult: i == 0,
+					})
+					seq++
+					continue
+				}
+
+				res.Trace.add(Event{
+					T:       at,
+					Kind:    EventDrop,
+					Node:    from,
+					Peer:    envelope.To,
+					MsgKind: envelope.Msg.Kind.String(),
+					Size:    len(envelope.Msg.Payload),
+				})
+
+				ack := queuedEvent{
+					at:   at + 1,
+					seq:  seq,
+					kind: EventSendResult,
+					node: from,
+					peer: envelope.To,
+					msg:  envelope.Msg,
+				}
+				seq++
+				if !del.acked {
+					ack.err = errDropped
+				}
+				heap.Push(q, ack)
+			}
 		}
 	}
 
@@ -121,17 +168,24 @@ func Run(s Scenario, sub Subject) Result {
 			envelopes := nodes[queued.node].Core().Deliver(queued.msg)
 			emitSend(now, queued.node, envelopes)
 
-			heap.Push(q, queuedEvent{
+			if !queued.sendResult {
+				continue
+			}
+			ack := queuedEvent{
 				at:   now,
 				seq:  seq,
 				kind: EventSendResult,
 				node: queued.peer,
 				peer: queued.node,
 				msg:  queued.msg,
-			})
+			}
 			seq++
+			if !queued.ack {
+				ack.err = errAckLost
+			}
+			heap.Push(q, ack)
 		case EventSendResult:
-			nodes[queued.node].Core().SendResult(queued.peer, queued.msg.Kind, nil)
+			nodes[queued.node].Core().SendResult(queued.peer, queued.msg.Kind, queued.err)
 		case EventOp:
 			err := nodes[queued.node].Apply(queued.op.Op)
 			if err != nil {
@@ -179,6 +233,10 @@ func toEvent(q queuedEvent) Event {
 		T:    q.at,
 		Kind: q.kind,
 		Node: q.node,
+	}
+
+	if q.err != nil {
+		e.Err = q.err.Error()
 	}
 
 	switch q.kind {
@@ -232,14 +290,16 @@ func nodeID(node int) string {
 }
 
 type queuedEvent struct {
-	at   Dur
-	seq  uint64
-	kind EventKind
-	node string
-	peer string
-	msg  artel.Message
-	op   OpEntry
-	err  error
+	at         Dur
+	seq        uint64
+	kind       EventKind
+	node       string
+	peer       string
+	msg        artel.Message
+	ack        bool
+	sendResult bool
+	op         OpEntry
+	err        error
 }
 type eventHeap []queuedEvent
 

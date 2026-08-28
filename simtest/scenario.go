@@ -27,13 +27,13 @@ const (
 	FaultDelay     FaultKind = "delay"
 	FaultDup       FaultKind = "dup"
 	FaultPartition FaultKind = "partition"
-	// FaultAckLie delivers the message but reports an error to the sender.
+	// FaultAckLost delivers the message but reports an error to the sender.
 	// Legal under the delivery contract — every subject must survive it.
-	FaultAckLie FaultKind = "acklie"
-	// FaultBreakAck reports success WITHOUT delivering — a transport that
+	FaultAckLost FaultKind = "acklost"
+	// FaultAckLie reports success WITHOUT delivering — a transport that
 	// violates the delivery contract. Negative-space experiments only: it
 	// must never appear in generated profiles.
-	FaultBreakAck FaultKind = "breakack"
+	FaultAckLie FaultKind = "acklie"
 )
 
 // FaultEntry is one anomaly window inside the active phase.
@@ -75,7 +75,7 @@ type Profile struct {
 	// nil = full mesh (Scenario.Topology stays nil, the canonical full-mesh form).
 	TopoGen func(r *rand.Rand, nodes int) [][2]int
 	// FaultKinds lists the anomalies the profile may use.
-	// FaultBreakAck must never be listed.
+	// FaultAckLie must never be listed.
 	FaultKinds []FaultKind
 	Interval   Dur
 	Horizon    Dur
@@ -84,7 +84,7 @@ type Profile struct {
 
 func GenScenario(seed uint64, p Profile) Scenario {
 	for _, f := range p.FaultKinds {
-		if f == FaultBreakAck {
+		if f == FaultAckLie {
 			panic("simtest: FaultBreakAck must not appear in Profile.FaultKinds")
 		}
 	}
@@ -132,7 +132,7 @@ func GenScenario(seed uint64, p Profile) Scenario {
 		case FaultDelay:
 			fault.MinD = Dur(r.Int64N(int64(sc.Horizon)))
 			fault.MaxD = fault.MinD + Dur(r.Int64N(int64(sc.Horizon-fault.MinD)))
-		case FaultDrop, FaultDup, FaultAckLie:
+		case FaultDrop, FaultDup, FaultAckLost:
 			fault.P = r.Float64()
 		case FaultPartition:
 			fault.Group = genRandomGroup(r, sc.Nodes)

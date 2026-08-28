@@ -17,25 +17,47 @@ import (
 // order (node 0 before node 1, scenario ops in list order); after
 // Horizon+Settle the queue is drained, then every node is observed.
 
-// pingCore: on every Tick sends one ping (KindPush, empty payload) to every
-// peer; Deliver counts pings; SendResult is ignored (fire-and-forget).
+// pingCore: on every Tick sends one ping (KindPush) to every peer; Deliver
+// counts pings; SendResult only counts outcomes (a fire-and-forget core).
+// With sized set, the k-th ping carries a k-byte payload, so Event.Size
+// becomes a message identity in the trace (anomaly tests: reorder, bounds).
 type pingCore struct {
 	self  string
 	peers []string
+	sized bool
+	kind  artel.Kind // what the pings are sent as (zero = KindPush)
+	sent  int
 	pings int
+	oks   int
+	errs  int
+	// resultKinds records the Kind reported by every SendResult call, so a
+	// test can check that a failed pull is reported as a pull.
+	resultKinds []artel.Kind
 }
 
 func (c *pingCore) Tick() []artel.Envelope {
 	out := make([]artel.Envelope, 0, len(c.peers))
 	for _, p := range c.peers {
-		out = append(out, artel.Envelope{To: p, Msg: artel.Message{From: c.self, Kind: artel.KindPush}})
+		msg := artel.Message{From: c.self, Kind: c.kind}
+		if c.sized {
+			c.sent++
+			msg.Payload = make([]byte, c.sent)
+		}
+		out = append(out, artel.Envelope{To: p, Msg: msg})
 	}
 	return out
 }
 
 func (c *pingCore) Deliver(artel.Message) []artel.Envelope { c.pings++; return nil }
 
-func (c *pingCore) SendResult(string, artel.Kind, error) {}
+func (c *pingCore) SendResult(_ string, kind artel.Kind, err error) {
+	c.resultKinds = append(c.resultKinds, kind)
+	if err != nil {
+		c.errs++
+	} else {
+		c.oks++
+	}
+}
 
 type pingNode struct {
 	core *pingCore
@@ -51,10 +73,18 @@ func (n *pingNode) Observe() Observation {
 	return Observation{State: []byte(s), Human: s}
 }
 
-type pingSubject struct{}
+// pingSubject keeps every node it creates (creation order, n0 first) so
+// tests can read core counters after Run.
+type pingSubject struct {
+	sized bool
+	kind  artel.Kind
+	nodes []*pingNode
+}
 
-func (pingSubject) NewNode(id string, _ int, peers []string) Node {
-	return &pingNode{core: &pingCore{self: id, peers: peers}}
+func (s *pingSubject) NewNode(id string, _ int, peers []string) Node {
+	n := &pingNode{core: &pingCore{self: id, peers: peers, sized: s.sized, kind: s.kind}}
+	s.nodes = append(s.nodes, n)
+	return n
 }
 
 // expectTrace numbers the rows and compares, reporting the first divergence.
@@ -75,7 +105,7 @@ func expectTrace(t *testing.T, got []Event, want []Event) {
 
 func TestRunTraceTableOnAnIdealNetwork(t *testing.T) {
 	s := Scenario{Seed: 1, Nodes: 2, Interval: 10, Horizon: 25, Settle: 0}
-	res := Run(s, pingSubject{})
+	res := Run(s, &pingSubject{})
 
 	var want []Event
 	for _, tick := range []Dur{0, 10, 20} {
@@ -124,8 +154,8 @@ func TestRunIsDeterministic(t *testing.T) {
 			{At: 33, Node: 2, Op: "noop"},
 		},
 	}
-	a := Run(s, pingSubject{})
-	b := Run(s, pingSubject{})
+	a := Run(s, &pingSubject{})
+	b := Run(s, &pingSubject{})
 	if !reflect.DeepEqual(a.Trace.Events, b.Trace.Events) {
 		t.Fatal("two runs of one scenario produced different traces")
 	}
@@ -143,7 +173,7 @@ func TestRunAppliesOpsOnSchedule(t *testing.T) {
 		Settle:   0,
 		Ops:      []OpEntry{{At: 5, Node: 1, Op: "noop"}},
 	}
-	res := Run(s, pingSubject{})
+	res := Run(s, &pingSubject{})
 
 	var ops []Event
 	for _, e := range res.Trace.Events {
@@ -183,7 +213,7 @@ func TestRunRejectsAnInvalidScenario(t *testing.T) {
 					t.Fatalf("Run accepted a scenario with %s", name)
 				}
 			}()
-			Run(s, pingSubject{})
+			Run(s, &pingSubject{})
 		})
 	}
 }

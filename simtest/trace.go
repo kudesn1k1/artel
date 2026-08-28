@@ -23,7 +23,11 @@ const (
 //
 // Node and Peer are protocol ids ("n0".."n{k-1}", the stable "n%d" mapping of
 // scenario indexes): the trace records protocol history, and the protocol
-// addresses peers by string. Peer is empty when the event has no counterparty.
+// addresses peers by string. Node is the node in whose history the event
+// lives: the actor for tick/op/send, the receiver for deliver, the sender
+// learning the outcome for sendresult, and the sender whose message the
+// network dropped or duplicated for drop/dup (a verdict on a send keeps the
+// send's shape). Peer is empty when the event has no counterparty.
 type Event struct {
 	T    Dur       `json:"t"`
 	Seq  uint64    `json:"seq"`
