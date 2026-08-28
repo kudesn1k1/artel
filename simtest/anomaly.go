@@ -5,6 +5,43 @@ import (
 	"slices"
 )
 
+// FaultKind names one network anomaly. Anomalies compose: a scenario carries
+// any mix of fault windows.
+type FaultKind string
+
+const (
+	FaultDrop      FaultKind = "drop"
+	FaultDelay     FaultKind = "delay"
+	FaultDup       FaultKind = "dup"
+	FaultPartition FaultKind = "partition"
+	// FaultAckLost delivers the message but reports an error to the sender.
+	// Legal under the delivery contract — every subject must survive it.
+	FaultAckLost FaultKind = "acklost"
+	// FaultAckLie reports success WITHOUT delivering — a transport that
+	// violates the delivery contract. Negative-space experiments only: it
+	// must never appear in generated profiles.
+	FaultAckLie FaultKind = "acklie"
+)
+
+func (k FaultKind) IsValid() bool {
+	switch k {
+	case FaultDrop, FaultDelay, FaultDup, FaultPartition, FaultAckLost, FaultAckLie:
+		return true
+	default:
+		return false
+	}
+}
+
+// FaultEntry is one anomaly window inside the active phase.
+type FaultEntry struct {
+	At, Until Dur
+	Kind      FaultKind
+	P         float64 // per-message probability, where the kind uses one
+	MinD      Dur     // FaultDelay: delivery delay bounds
+	MaxD      Dur
+	Group     []int // FaultPartition: one side of the split
+}
+
 var faultPriority = map[FaultKind]int{
 	FaultPartition: 0,
 	FaultDrop:      1,

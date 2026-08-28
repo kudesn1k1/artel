@@ -18,34 +18,6 @@ type OpEntry struct {
 	Op   string
 }
 
-// FaultKind names one network anomaly. Anomalies compose: a scenario carries
-// any mix of fault windows.
-type FaultKind string
-
-const (
-	FaultDrop      FaultKind = "drop"
-	FaultDelay     FaultKind = "delay"
-	FaultDup       FaultKind = "dup"
-	FaultPartition FaultKind = "partition"
-	// FaultAckLost delivers the message but reports an error to the sender.
-	// Legal under the delivery contract — every subject must survive it.
-	FaultAckLost FaultKind = "acklost"
-	// FaultAckLie reports success WITHOUT delivering — a transport that
-	// violates the delivery contract. Negative-space experiments only: it
-	// must never appear in generated profiles.
-	FaultAckLie FaultKind = "acklie"
-)
-
-// FaultEntry is one anomaly window inside the active phase.
-type FaultEntry struct {
-	At, Until Dur
-	Kind      FaultKind
-	P         float64 // per-message probability, where the kind uses one
-	MinD      Dur     // FaultDelay: delivery delay bounds
-	MaxD      Dur
-	Group     []int // FaultPartition: one side of the split
-}
-
 // Scenario is a complete, plain-data description of one simulation run.
 // It is a pure function of its seed when generated (GenScenario), a literal
 // in hand-written tests, and the unit of minimization for the shrinker —

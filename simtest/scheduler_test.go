@@ -3,6 +3,7 @@ package simtest
 import (
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/kudesn1k1/artel"
@@ -205,12 +206,21 @@ func TestRunRejectsAnInvalidScenario(t *testing.T) {
 		"topology node negative": {Seed: 1, Nodes: 2, Interval: 10, Horizon: 25, Topology: [][2]int{{-1, 1}}},
 		"no nodes":               {Seed: 1, Nodes: 0, Interval: 10, Horizon: 25},
 		"no interval":            {Seed: 1, Nodes: 2, Interval: 0, Horizon: 25},
+		// Fault windows are validated up front too: a bad one would otherwise
+		// surface as a cryptic rand panic mid-run, or silently never apply.
+		"fault MaxD < MinD":    {Seed: 1, Nodes: 2, Interval: 10, Horizon: 25, Faults: []FaultEntry{{At: 0, Until: 10, Kind: FaultDelay, MinD: 5, MaxD: 3}}},
+		"fault negative MinD":  {Seed: 1, Nodes: 2, Interval: 10, Horizon: 25, Faults: []FaultEntry{{At: 0, Until: 10, Kind: FaultDelay, MinD: -1, MaxD: 3}}},
+		"fault P out of [0,1]": {Seed: 1, Nodes: 2, Interval: 10, Horizon: 25, Faults: []FaultEntry{{At: 0, Until: 10, Kind: FaultDrop, P: 1.5}}},
+		"fault unknown kind":   {Seed: 1, Nodes: 2, Interval: 10, Horizon: 25, Faults: []FaultEntry{{At: 0, Until: 10, Kind: FaultKind("fog")}}},
 	}
 	for name, s := range cases {
 		t.Run(name, func(t *testing.T) {
 			defer func() {
-				if recover() == nil {
-					t.Fatalf("Run accepted a scenario with %s", name)
+				// Validation panics with a message; a stray runtime panic
+				// (index out of range, a bad rand argument) is not validation.
+				msg, _ := recover().(string)
+				if !strings.HasPrefix(msg, "simtest:") {
+					t.Fatalf("Run did not reject a scenario with %s by validation: %v", name, msg)
 				}
 			}()
 			Run(s, &pingSubject{})

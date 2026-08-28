@@ -197,6 +197,21 @@ func validateScenario(s Scenario) {
 			panic("simtest: topology node out of range")
 		}
 	}
+
+	for _, f := range s.Faults {
+		if f.MaxD < f.MinD {
+			panic("simtest: fault MaxD < MinD")
+		}
+		if f.MinD < 0 {
+			panic("simtest: fault MinD < 0")
+		}
+		if f.P < 0 || f.P > 1 {
+			panic("simtest: fault probability out of [0,1] range")
+		}
+		if !f.Kind.IsValid() {
+			panic("simtest: invalid fault kind")
+		}
+	}
 }
 
 // queuedEvent is a scheduled step. It is a tagged union by kind: which of
