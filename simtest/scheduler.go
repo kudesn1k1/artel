@@ -266,21 +266,11 @@ func toEvent(q queuedEvent) Event {
 
 func buildNodeGraph(s Scenario) [][]int {
 	g := make([][]int, s.Nodes)
-	if s.Topology == nil {
-		for i := range g {
-			g[i] = make([]int, 0, s.Nodes-1)
-			for j := range s.Nodes {
-				if j != i {
-					g[i] = append(g[i], j)
-				}
-			}
-		}
-	} else {
-		for _, e := range s.Topology {
-			a, b := e[0], e[1]
-			g[a] = append(g[a], b)
-			g[b] = append(g[b], a)
-		}
+
+	for _, e := range s.Topology {
+		a, b := e[0], e[1]
+		g[a] = append(g[a], b)
+		g[b] = append(g[b], a)
 	}
 
 	for i := range g {

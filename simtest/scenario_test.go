@@ -142,9 +142,9 @@ func TestGenScenarioStaysWithinTheProfile(t *testing.T) {
 		if s.Interval != p.Interval || s.Horizon != p.Horizon || s.Settle != p.Settle {
 			t.Fatalf("seed %d: timing fields diverge from the profile: %+v", seed, s)
 		}
-		if s.Topology != nil {
-			t.Fatalf("seed %d: no TopoGen in the profile, but Topology=%v (nil is the canonical full mesh)",
-				seed, s.Topology)
+		if !reflect.DeepEqual(s.Topology, FullMesh(s.Nodes)) {
+			t.Fatalf("seed %d: no TopoGen in the profile, but Topology=%v is not the full mesh over %d nodes",
+				seed, s.Topology, s.Nodes)
 		}
 
 		if len(s.Ops) > p.MaxOps {

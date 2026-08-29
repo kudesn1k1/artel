@@ -105,7 +105,7 @@ func expectTrace(t *testing.T, got []Event, want []Event) {
 }
 
 func TestRunTraceTableOnAnIdealNetwork(t *testing.T) {
-	s := Scenario{Seed: 1, Nodes: 2, Interval: 10, Horizon: 25, Settle: 0}
+	s := Scenario{Seed: 1, Nodes: 2, Topology: FullMesh(2), Interval: 10, Horizon: 25, Settle: 0}
 	res := Run(s, &pingSubject{})
 
 	var want []Event
@@ -146,6 +146,7 @@ func TestRunIsDeterministic(t *testing.T) {
 	s := Scenario{
 		Seed:     9,
 		Nodes:    3,
+		Topology: FullMesh(3),
 		Interval: 7,
 		Horizon:  50,
 		Settle:   20,
@@ -169,6 +170,7 @@ func TestRunAppliesOpsOnSchedule(t *testing.T) {
 	s := Scenario{
 		Seed:     1,
 		Nodes:    2,
+		Topology: FullMesh(2),
 		Interval: 10,
 		Horizon:  12,
 		Settle:   0,
@@ -196,22 +198,22 @@ func TestRunAppliesOpsOnSchedule(t *testing.T) {
 // panics with a message, mirroring GenScenario's profile validation.
 func TestRunRejectsAnInvalidScenario(t *testing.T) {
 	cases := map[string]Scenario{
-		"op beyond horizon": {Seed: 1, Nodes: 2, Interval: 10, Horizon: 25, Ops: []OpEntry{{At: 30, Node: 0, Op: "noop"}}},
+		"op beyond horizon": {Seed: 1, Nodes: 2, Topology: FullMesh(2), Interval: 10, Horizon: 25, Ops: []OpEntry{{At: 30, Node: 0, Op: "noop"}}},
 		// settle is a quiet window: ops end at Horizon, not at Horizon+Settle.
-		"op during settle":       {Seed: 1, Nodes: 2, Interval: 10, Horizon: 25, Settle: 10, Ops: []OpEntry{{At: 30, Node: 0, Op: "noop"}}},
-		"op node out of range":   {Seed: 1, Nodes: 2, Interval: 10, Horizon: 25, Ops: []OpEntry{{At: 5, Node: 5, Op: "noop"}}},
-		"op node == Nodes":       {Seed: 1, Nodes: 2, Interval: 10, Horizon: 25, Ops: []OpEntry{{At: 5, Node: 2, Op: "noop"}}},
-		"op node negative":       {Seed: 1, Nodes: 2, Interval: 10, Horizon: 25, Ops: []OpEntry{{At: 5, Node: -1, Op: "noop"}}},
+		"op during settle":       {Seed: 1, Nodes: 2, Topology: FullMesh(2), Interval: 10, Horizon: 25, Settle: 10, Ops: []OpEntry{{At: 30, Node: 0, Op: "noop"}}},
+		"op node out of range":   {Seed: 1, Nodes: 2, Topology: FullMesh(2), Interval: 10, Horizon: 25, Ops: []OpEntry{{At: 5, Node: 5, Op: "noop"}}},
+		"op node == Nodes":       {Seed: 1, Nodes: 2, Topology: FullMesh(2), Interval: 10, Horizon: 25, Ops: []OpEntry{{At: 5, Node: 2, Op: "noop"}}},
+		"op node negative":       {Seed: 1, Nodes: 2, Topology: FullMesh(2), Interval: 10, Horizon: 25, Ops: []OpEntry{{At: 5, Node: -1, Op: "noop"}}},
 		"topology node == Nodes": {Seed: 1, Nodes: 2, Interval: 10, Horizon: 25, Topology: [][2]int{{0, 2}}},
 		"topology node negative": {Seed: 1, Nodes: 2, Interval: 10, Horizon: 25, Topology: [][2]int{{-1, 1}}},
-		"no nodes":               {Seed: 1, Nodes: 0, Interval: 10, Horizon: 25},
-		"no interval":            {Seed: 1, Nodes: 2, Interval: 0, Horizon: 25},
+		"no nodes":               {Seed: 1, Nodes: 0, Topology: FullMesh(0), Interval: 10, Horizon: 25},
+		"no interval":            {Seed: 1, Nodes: 2, Topology: FullMesh(2), Interval: 0, Horizon: 25},
 		// Fault windows are validated up front too: a bad one would otherwise
 		// surface as a cryptic rand panic mid-run, or silently never apply.
-		"fault MaxD < MinD":    {Seed: 1, Nodes: 2, Interval: 10, Horizon: 25, Faults: []FaultEntry{{At: 0, Until: 10, Kind: FaultDelay, MinD: 5, MaxD: 3}}},
-		"fault negative MinD":  {Seed: 1, Nodes: 2, Interval: 10, Horizon: 25, Faults: []FaultEntry{{At: 0, Until: 10, Kind: FaultDelay, MinD: -1, MaxD: 3}}},
-		"fault P out of [0,1]": {Seed: 1, Nodes: 2, Interval: 10, Horizon: 25, Faults: []FaultEntry{{At: 0, Until: 10, Kind: FaultDrop, P: 1.5}}},
-		"fault unknown kind":   {Seed: 1, Nodes: 2, Interval: 10, Horizon: 25, Faults: []FaultEntry{{At: 0, Until: 10, Kind: FaultKind("fog")}}},
+		"fault MaxD < MinD":    {Seed: 1, Nodes: 2, Topology: FullMesh(2), Interval: 10, Horizon: 25, Faults: []FaultEntry{{At: 0, Until: 10, Kind: FaultDelay, MinD: 5, MaxD: 3}}},
+		"fault negative MinD":  {Seed: 1, Nodes: 2, Topology: FullMesh(2), Interval: 10, Horizon: 25, Faults: []FaultEntry{{At: 0, Until: 10, Kind: FaultDelay, MinD: -1, MaxD: 3}}},
+		"fault P out of [0,1]": {Seed: 1, Nodes: 2, Topology: FullMesh(2), Interval: 10, Horizon: 25, Faults: []FaultEntry{{At: 0, Until: 10, Kind: FaultDrop, P: 1.5}}},
+		"fault unknown kind":   {Seed: 1, Nodes: 2, Topology: FullMesh(2), Interval: 10, Horizon: 25, Faults: []FaultEntry{{At: 0, Until: 10, Kind: FaultKind("fog")}}},
 	}
 	for name, s := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -280,7 +282,7 @@ func requireMonotoneT(t *testing.T, events []Event) {
 func TestRunDrainsTheQueueAfterSettle(t *testing.T) {
 	// One tick at t=0 (0+10 < 5 fails), then 8 replies per node: the last
 	// deliveries land at t=9, well past Horizon+Settle=5.
-	s := Scenario{Seed: 1, Nodes: 2, Interval: 10, Horizon: 5, Settle: 0}
+	s := Scenario{Seed: 1, Nodes: 2, Topology: FullMesh(2), Interval: 10, Horizon: 5, Settle: 0}
 	res := Run(s, echoSubject{budget: 8})
 
 	ticks, late := 0, 0
@@ -318,5 +320,5 @@ func TestRunPanicsWhenTheCoreNeverSettles(t *testing.T) {
 			t.Fatal("an unbounded ping-pong past Horizon+Settle must trip the drain cap")
 		}
 	}()
-	Run(Scenario{Seed: 1, Nodes: 2, Interval: 10, Horizon: 5, Settle: 0}, echoSubject{budget: -1})
+	Run(Scenario{Seed: 1, Nodes: 2, Topology: FullMesh(2), Interval: 10, Horizon: 5, Settle: 0}, echoSubject{budget: -1})
 }

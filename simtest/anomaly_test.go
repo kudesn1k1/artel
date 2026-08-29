@@ -84,7 +84,7 @@ func expectOutcomes(t *testing.T, sub *pingSubject, pings, oks, errs int) {
 
 func TestDropWindowLosesMessagesAndFastFails(t *testing.T) {
 	// Ticks at 0, 10, 20; only the t=10 pings fall inside [10, 20).
-	s := Scenario{Seed: 1, Nodes: 2, Interval: 10, Horizon: 25,
+	s := Scenario{Seed: 1, Nodes: 2, Topology: FullMesh(2), Interval: 10, Horizon: 25,
 		Faults: []FaultEntry{{At: 10, Until: 20, Kind: FaultDrop, P: 1}}}
 	sub := &pingSubject{}
 	res := Run(s, sub)
@@ -111,7 +111,7 @@ func TestDropWindowLosesMessagesAndFastFails(t *testing.T) {
 func TestDelayShiftsDeliveryExactly(t *testing.T) {
 	// Horizon 26, not 25: the last deliveries land at t=25 and must not share
 	// the instant with the observe rows.
-	s := Scenario{Seed: 1, Nodes: 2, Interval: 10, Horizon: 26,
+	s := Scenario{Seed: 1, Nodes: 2, Topology: FullMesh(2), Interval: 10, Horizon: 26,
 		Faults: []FaultEntry{{At: 0, Until: 100, Kind: FaultDelay, MinD: 5, MaxD: 5}}}
 	sub := &pingSubject{}
 	res := Run(s, sub)
@@ -139,7 +139,7 @@ func TestDelayShiftsDeliveryExactly(t *testing.T) {
 func TestJitterReordersMessagesWithinBounds(t *testing.T) {
 	reordered := false
 	for seed := uint64(1); seed <= 20; seed++ {
-		s := Scenario{Seed: seed, Nodes: 2, Interval: 1, Horizon: 20, Settle: 0,
+		s := Scenario{Seed: seed, Nodes: 2, Topology: FullMesh(2), Interval: 1, Horizon: 20, Settle: 0,
 			Faults: []FaultEntry{{At: 0, Until: 100, Kind: FaultDelay, MinD: 1, MaxD: 20}}}
 		res := Run(s, &pingSubject{sized: true})
 
@@ -168,7 +168,7 @@ func TestJitterReordersMessagesWithinBounds(t *testing.T) {
 }
 
 func TestDupDeliversTwiceAndAcksOnce(t *testing.T) {
-	s := Scenario{Seed: 1, Nodes: 2, Interval: 10, Horizon: 25,
+	s := Scenario{Seed: 1, Nodes: 2, Topology: FullMesh(2), Interval: 10, Horizon: 25,
 		Faults: []FaultEntry{{At: 0, Until: 100, Kind: FaultDup, P: 1}}}
 	sub := &pingSubject{}
 	res := Run(s, sub)
@@ -195,7 +195,7 @@ func TestDupDeliversTwiceAndAcksOnce(t *testing.T) {
 func TestPartitionSplitsGroupFromTheRest(t *testing.T) {
 	// n0 alone versus {n1, n2} during [10, 20): n0's links are cut both ways,
 	// n1<->n2 keeps flowing; ticks at 0 and 20 are unaffected.
-	s := Scenario{Seed: 1, Nodes: 3, Interval: 10, Horizon: 25,
+	s := Scenario{Seed: 1, Nodes: 3, Topology: FullMesh(3), Interval: 10, Horizon: 25,
 		Faults: []FaultEntry{{At: 10, Until: 20, Kind: FaultPartition, Group: []int{0}}}}
 	sub := &pingSubject{}
 	res := Run(s, sub)
@@ -241,7 +241,7 @@ func TestPartitionSplitsGroupFromTheRest(t *testing.T) {
 }
 
 func TestAckLostDeliversButReportsFailure(t *testing.T) {
-	s := Scenario{Seed: 1, Nodes: 2, Interval: 10, Horizon: 25,
+	s := Scenario{Seed: 1, Nodes: 2, Topology: FullMesh(2), Interval: 10, Horizon: 25,
 		Faults: []FaultEntry{{At: 0, Until: 100, Kind: FaultAckLost, P: 1}}}
 	sub := &pingSubject{}
 	res := Run(s, sub)
@@ -262,7 +262,7 @@ func TestAckLostDeliversButReportsFailure(t *testing.T) {
 }
 
 func TestAckLieReportsSuccessWithoutDelivering(t *testing.T) {
-	s := Scenario{Seed: 1, Nodes: 2, Interval: 10, Horizon: 25,
+	s := Scenario{Seed: 1, Nodes: 2, Topology: FullMesh(2), Interval: 10, Horizon: 25,
 		Faults: []FaultEntry{{At: 0, Until: 100, Kind: FaultAckLie, P: 1}}}
 	sub := &pingSubject{}
 	res := Run(s, sub)
@@ -282,7 +282,7 @@ func TestAckLieReportsSuccessWithoutDelivering(t *testing.T) {
 
 func mixScenario(seed uint64) Scenario {
 	return Scenario{
-		Seed: seed, Nodes: 4, Interval: 3, Horizon: 60, Settle: 40,
+		Seed: seed, Nodes: 4, Topology: FullMesh(4), Interval: 3, Horizon: 60, Settle: 40,
 		Ops: []OpEntry{{At: 4, Node: 2, Op: "noop"}, {At: 31, Node: 0, Op: "noop"}},
 		Faults: []FaultEntry{
 			{At: 0, Until: 20, Kind: FaultDrop, P: 0.3},
@@ -313,7 +313,7 @@ func TestAnomalyMixIsSeedDeterministic(t *testing.T) {
 // KindPush, so a sendresult event that forgets to carry the message would
 // turn a failed pull into a failed push — both in the trace and in the core.
 func TestFailedSendKeepsItsKind(t *testing.T) {
-	s := Scenario{Seed: 1, Nodes: 2, Interval: 10, Horizon: 25,
+	s := Scenario{Seed: 1, Nodes: 2, Topology: FullMesh(2), Interval: 10, Horizon: 25,
 		Faults: []FaultEntry{{At: 0, Until: 100, Kind: FaultDrop, P: 1}}}
 	sub := &pingSubject{kind: artel.KindPull}
 	res := Run(s, sub)
@@ -344,7 +344,7 @@ func TestFailedSendKeepsItsKind(t *testing.T) {
 // Two partitions with identical windows are two independent cuts, not one:
 // isolating n0 and isolating n1 at the same time leaves no link at all.
 func TestOverlappingPartitionsBothApply(t *testing.T) {
-	s := Scenario{Seed: 1, Nodes: 3, Interval: 10, Horizon: 25,
+	s := Scenario{Seed: 1, Nodes: 3, Topology: FullMesh(3), Interval: 10, Horizon: 25,
 		Faults: []FaultEntry{
 			{At: 10, Until: 20, Kind: FaultPartition, Group: []int{0}},
 			{At: 10, Until: 20, Kind: FaultPartition, Group: []int{1}},

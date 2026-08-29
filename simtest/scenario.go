@@ -76,7 +76,7 @@ func GenScenario(seed uint64, p Profile) Scenario {
 			panic(fmt.Sprintf("simtest: TopoGen returned a disconnected graph for %d nodes: %v", sc.Nodes, sc.Topology))
 		}
 	} else {
-		sc.Topology = nil
+		sc.Topology = FullMesh(sc.Nodes)
 	}
 
 	sc.Ops = make([]OpEntry, r.IntN(p.MaxOps+1))
@@ -136,6 +136,16 @@ func genRandomGroup(r *rand.Rand, nodes int) []int {
 	}
 
 	return out
+}
+
+func FullMesh(nodes int) [][2]int {
+	ans := make([][2]int, 0, nodes*(nodes-1)/2)
+	for i := range nodes {
+		for j := i + 1; j < nodes; j++ {
+			ans = append(ans, [2]int{i, j})
+		}
+	}
+	return ans
 }
 
 func graphIsConnected(nodes int, g [][2]int) bool {
