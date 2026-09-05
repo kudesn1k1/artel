@@ -23,7 +23,9 @@ func goldenScenario() Scenario {
 }
 
 // The JSONL format is a replay artifact: the header names the scenario, then
-// one event per line in canonical field order. Pinned byte-for-byte.
+// one event per line in canonical field order; every row about a message
+// (deliver, drop, dup, sendresult) names its send row in "sent". Pinned
+// byte-for-byte.
 func TestWriteJSONLGolden(t *testing.T) {
 	s := goldenScenario()
 	res := Run(s, &pingSubject{})
@@ -57,19 +59,19 @@ func TestWriteJSONLGolden(t *testing.T) {
 		`{"t":0,"seq":1,"kind":"send","node":"n0","peer":"n1","msg_kind":"push"}`,
 		`{"t":0,"seq":2,"kind":"tick","node":"n1"}`,
 		`{"t":0,"seq":3,"kind":"send","node":"n1","peer":"n0","msg_kind":"push"}`,
-		`{"t":1,"seq":4,"kind":"deliver","node":"n1","peer":"n0","msg_kind":"push"}`,
-		`{"t":1,"seq":5,"kind":"deliver","node":"n0","peer":"n1","msg_kind":"push"}`,
-		`{"t":1,"seq":6,"kind":"sendresult","node":"n0","peer":"n1","msg_kind":"push"}`,
-		`{"t":1,"seq":7,"kind":"sendresult","node":"n1","peer":"n0","msg_kind":"push"}`,
+		`{"t":1,"seq":4,"kind":"deliver","node":"n1","peer":"n0","msg_kind":"push","sent":1}`,
+		`{"t":1,"seq":5,"kind":"deliver","node":"n0","peer":"n1","msg_kind":"push","sent":3}`,
+		`{"t":1,"seq":6,"kind":"sendresult","node":"n0","peer":"n1","msg_kind":"push","sent":1}`,
+		`{"t":1,"seq":7,"kind":"sendresult","node":"n1","peer":"n0","msg_kind":"push","sent":3}`,
 		`{"t":5,"seq":8,"kind":"op","node":"n1","op":"noop"}`,
 		`{"t":10,"seq":9,"kind":"tick","node":"n0"}`,
 		`{"t":10,"seq":10,"kind":"send","node":"n0","peer":"n1","msg_kind":"push"}`,
-		`{"t":10,"seq":11,"kind":"drop","node":"n0","peer":"n1","msg_kind":"push"}`,
+		`{"t":10,"seq":11,"kind":"drop","node":"n0","peer":"n1","msg_kind":"push","sent":10}`,
 		`{"t":10,"seq":12,"kind":"tick","node":"n1"}`,
 		`{"t":10,"seq":13,"kind":"send","node":"n1","peer":"n0","msg_kind":"push"}`,
-		`{"t":10,"seq":14,"kind":"drop","node":"n1","peer":"n0","msg_kind":"push"}`,
-		`{"t":11,"seq":15,"kind":"sendresult","node":"n0","peer":"n1","msg_kind":"push","err":"failed to deliver: dropped"}`,
-		`{"t":11,"seq":16,"kind":"sendresult","node":"n1","peer":"n0","msg_kind":"push","err":"failed to deliver: dropped"}`,
+		`{"t":10,"seq":14,"kind":"drop","node":"n1","peer":"n0","msg_kind":"push","sent":13}`,
+		`{"t":11,"seq":15,"kind":"sendresult","node":"n0","peer":"n1","msg_kind":"push","sent":10,"err":"failed to deliver: dropped"}`,
+		`{"t":11,"seq":16,"kind":"sendresult","node":"n1","peer":"n0","msg_kind":"push","sent":13,"err":"failed to deliver: dropped"}`,
 		`{"t":12,"seq":17,"kind":"observe","node":"n0"}`,
 		`{"t":12,"seq":18,"kind":"observe","node":"n1"}`,
 	}
@@ -102,6 +104,55 @@ func TestWriteJSONLCarriesSizeAndKeepsErrorsReadable(t *testing.T) {
 	}
 	if !strings.Contains(out, `"err":"failed to ack: lost"`) {
 		t.Fatalf("the ack-lost error is not on the sendresult line:\n%s", out)
+	}
+}
+
+// requireLinked checks the send link of every row about a message: Sent names
+// an earlier send row of the same message, seen from the right side (a deliver
+// is the receiver's row, the verdicts and the outcome are the sender's), and
+// every send gets exactly one outcome — dup is two copies, one sendresult.
+func requireLinked(t *testing.T, events []Event) {
+	t.Helper()
+	outcomes := map[uint64]int{}
+	for _, e := range events {
+		switch e.Kind {
+		case EventDeliver, EventDrop, EventDup, EventSendResult:
+		default:
+			continue
+		}
+		if e.Sent >= e.Seq {
+			t.Fatalf("row %d (%s) names send row %d, which is not before it", e.Seq, e.Kind, e.Sent)
+		}
+		from, to := e.Node, e.Peer
+		if e.Kind == EventDeliver {
+			from, to = e.Peer, e.Node
+		}
+		s := events[e.Sent]
+		if s.Kind != EventSend || s.Node != from || s.Peer != to || s.MsgKind != e.MsgKind || s.Size != e.Size {
+			t.Fatalf("row %d (%s %s→%s %s/%dB) names row %d, which is not its send: %+v", e.Seq, e.Kind, from, to, e.MsgKind, e.Size, e.Sent, s)
+		}
+		if e.Kind == EventSendResult {
+			outcomes[e.Sent]++
+		}
+	}
+	for _, e := range events {
+		if e.Kind == EventSend && outcomes[e.Seq] != 1 {
+			t.Fatalf("send row %d got %d outcomes, want exactly one", e.Seq, outcomes[e.Seq])
+		}
+	}
+}
+
+// The link is what lets a reader pair rows without guessing the network's
+// order: jitter reorders, dup doubles, drop and delivery interleave. Checked
+// under the full anomaly mix with sized pings, so a wrong pairing also shows
+// as a size mismatch.
+func TestTraceLinksEveryVerdictToItsSend(t *testing.T) {
+	for seed := uint64(1); seed <= 5; seed++ {
+		res := Run(mixScenario(seed), &pingSubject{sized: true})
+		if len(ofKind(res.Trace.Events, EventDeliver)) == 0 || len(ofKind(res.Trace.Events, EventDrop)) == 0 {
+			t.Fatalf("seed %d: the mix produced no deliveries or no drops, the link is untested", seed)
+		}
+		requireLinked(t, res.Trace.Events)
 	}
 }
 
@@ -162,7 +213,7 @@ type driftingNode struct {
 
 func (n *driftingNode) Observe() Observation {
 	s := "stamp:" + strings.Repeat("x", n.stamp)
-	return Observation{State: []byte(s), Human: s}
+	return Observation{Node: n.core.self, State: []byte(s), Value: s}
 }
 
 func (d *driftingSubject) NewNode(id string, _ int, peers []string) Node {
@@ -201,8 +252,9 @@ func TestRequireDeterministic(t *testing.T) {
 }
 
 // String is for eyes, not tools: the lane layout is a taste call, so only the
-// facts are pinned — every node has a lane, every kind is rendered, and the
-// text is a pure function of the trace.
+// facts are pinned — every node has a lane, every kind is rendered, every row
+// about a message carries its send's #tag, and the text is a pure function
+// of the trace.
 func TestStringRendersEveryLaneAndKind(t *testing.T) {
 	s := Scenario{Seed: 3, Nodes: 3, Topology: FullMesh(3), Interval: 10, Horizon: 25,
 		Ops: []OpEntry{{At: 5, Node: 2, Op: "inc:5"}},
@@ -213,7 +265,10 @@ func TestStringRendersEveryLaneAndKind(t *testing.T) {
 	res := Run(s, &pingSubject{})
 	out := res.Trace.String()
 
-	for _, want := range []string{"n0", "n1", "n2", "tick", "send", "dup", "deliver", "sendresult", "drop", "op", "inc:5", "observe", "failed to deliver: dropped"} {
+	// Row 1 is n0's first send (to n1); the dup verdict, both copies and the
+	// outcome are about it.
+	for _, want := range []string{"n0", "n1", "n2", "tick", "send", "dup", "deliver", "sendresult", "drop", "op", "inc:5", "observe", "failed to deliver: dropped",
+		"send push →n1 #1", "dup push →n1 #1", "deliver push ←n0 #1", "sendresult push →n1 #1 ok"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("String() lacks %q:\n%s", want, out)
 		}

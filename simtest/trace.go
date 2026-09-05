@@ -1,5 +1,9 @@
 package simtest
 
+import (
+	"slices"
+)
+
 // EventKind names one applied step of a simulation run.
 type EventKind string
 
@@ -39,8 +43,12 @@ type Event struct {
 	// seed, and size alone separates a full-state answer from a small delta.
 	MsgKind string `json:"msg_kind,omitempty"` // artel kind on the wire: "push"/"pull"
 	Size    int    `json:"size,omitempty"`     // payload bytes
-	Op      string `json:"op,omitempty"`
-	Err     string `json:"err,omitempty"`
+	// Sent links a row about a message (deliver, drop, dup, sendresult) to the
+	// send row it is about: that send's Seq. A send is never row 0 — every
+	// trace opens with a tick — so zero means "not about a message".
+	Sent uint64 `json:"sent,omitempty"`
+	Op   string `json:"op,omitempty"`
+	Err  string `json:"err,omitempty"`
 }
 
 // Trace is the append-only log of one run: the replay artifact, the oracle
@@ -53,4 +61,39 @@ func (t *Trace) add(e Event) int {
 	e.Seq = uint64(len(t.Events))
 	t.Events = append(t.Events, e)
 	return len(t.Events) - 1
+}
+
+// History distils the trace for oracles: the nodes (one observe row each),
+// the accepted ops and every delivery with its send link. Crashed is empty —
+// the DES has no crash events yet.
+func (t Trace) History() History {
+	nodesMap := make(map[string]struct{})
+	ops := make([]Op, 0, len(t.Events))
+	dels := make([]Delivery, 0, len(t.Events))
+
+	for _, ev := range t.Events {
+		if ev.Kind == EventObserve {
+			nodesMap[ev.Node] = struct{}{}
+		}
+
+		if ev.Kind == EventOp && ev.Err == "" {
+			ops = append(ops, Op{T: ev.T, Seq: ev.Seq, Node: ev.Node, Op: ev.Op})
+		}
+		if ev.Kind == EventDeliver {
+			dels = append(dels, Delivery{T: ev.T, Seq: ev.Seq, Sent: ev.Sent, From: ev.Peer, To: ev.Node, Kind: ev.MsgKind})
+		}
+	}
+
+	nodes := make([]string, 0, len(nodesMap))
+	for n := range nodesMap {
+		nodes = append(nodes, n)
+	}
+	slices.Sort(nodes)
+
+	return History{
+		Nodes:      nodes,
+		Ops:        ops,
+		Deliveries: dels,
+		Crashed:    nil, // TODO: set crashed nodes, empty in v0.2
+	}
 }

@@ -15,8 +15,9 @@ import (
 // every Interval after; ideal network (Task 3) delivers with a fixed delay
 // of 1; a successful delivery schedules SendResult(ok) to the sender at the
 // same instant (later seq); at equal instants events apply in scheduling
-// order (node 0 before node 1, scenario ops in list order); after
-// Horizon+Settle the queue is drained, then every node is observed.
+// order (node 0 before node 1, scenario ops in list order); every row about
+// a message (deliver, drop, dup, sendresult) names its send row in Sent;
+// after Horizon+Settle the queue is drained, then every node is observed.
 
 // pingCore: on every Tick sends one ping (KindPush) to every peer; Deliver
 // counts pings; SendResult only counts outcomes (a fire-and-forget core).
@@ -71,7 +72,7 @@ func (n *pingNode) Apply(string) error { n.ops++; return nil }
 
 func (n *pingNode) Observe() Observation {
 	s := fmt.Sprintf("pings:%d ops:%d", n.core.pings, n.ops)
-	return Observation{State: []byte(s), Human: s}
+	return Observation{Node: n.core.self, State: []byte(s), Value: s}
 }
 
 // pingSubject keeps every node it creates (creation order, n0 first) so
@@ -110,6 +111,7 @@ func TestRunTraceTableOnAnIdealNetwork(t *testing.T) {
 
 	var want []Event
 	for _, tick := range []Dur{0, 10, 20} {
+		base := uint64(len(want)) // the block's first row; sends are base+1 and base+3
 		want = append(want,
 			Event{T: tick, Kind: EventTick, Node: "n0"},
 			Event{T: tick, Kind: EventSend, Node: "n0", Peer: "n1", MsgKind: "push"},
@@ -117,10 +119,10 @@ func TestRunTraceTableOnAnIdealNetwork(t *testing.T) {
 			Event{T: tick, Kind: EventSend, Node: "n1", Peer: "n0", MsgKind: "push"},
 			// node n0's ping was scheduled first, so it is delivered first;
 			// each delivery schedules the sender's ok at the same instant.
-			Event{T: tick + 1, Kind: EventDeliver, Node: "n1", Peer: "n0", MsgKind: "push"},
-			Event{T: tick + 1, Kind: EventDeliver, Node: "n0", Peer: "n1", MsgKind: "push"},
-			Event{T: tick + 1, Kind: EventSendResult, Node: "n0", Peer: "n1", MsgKind: "push"},
-			Event{T: tick + 1, Kind: EventSendResult, Node: "n1", Peer: "n0", MsgKind: "push"},
+			Event{T: tick + 1, Kind: EventDeliver, Node: "n1", Peer: "n0", MsgKind: "push", Sent: base + 1},
+			Event{T: tick + 1, Kind: EventDeliver, Node: "n0", Peer: "n1", MsgKind: "push", Sent: base + 3},
+			Event{T: tick + 1, Kind: EventSendResult, Node: "n0", Peer: "n1", MsgKind: "push", Sent: base + 1},
+			Event{T: tick + 1, Kind: EventSendResult, Node: "n1", Peer: "n0", MsgKind: "push", Sent: base + 3},
 		)
 	}
 	want = append(want,
@@ -133,8 +135,8 @@ func TestRunTraceTableOnAnIdealNetwork(t *testing.T) {
 		t.Fatalf("Final has %d observations, want 2", len(res.Final))
 	}
 	for i, o := range res.Final {
-		if o.Human != "pings:3 ops:0" {
-			t.Fatalf("node %d observed %q, want \"pings:3 ops:0\"", i, o.Human)
+		if o.Value != "pings:3 ops:0" {
+			t.Fatalf("node %d observed %q, want \"pings:3 ops:0\"", i, o.Value)
 		}
 	}
 	if len(res.Violations) != 0 {
@@ -188,9 +190,9 @@ func TestRunAppliesOpsOnSchedule(t *testing.T) {
 	if len(ops) != 1 || !reflect.DeepEqual(ops[0], want) {
 		t.Fatalf("op events %+v, want exactly one %+v", ops, want)
 	}
-	if res.Final[0].Human != "pings:2 ops:0" || res.Final[1].Human != "pings:2 ops:1" {
+	if res.Final[0].Value != "pings:2 ops:0" || res.Final[1].Value != "pings:2 ops:1" {
 		t.Fatalf("finals %q / %q, want \"pings:2 ops:0\" / \"pings:2 ops:1\"",
-			res.Final[0].Human, res.Final[1].Human)
+			res.Final[0].Value, res.Final[1].Value)
 	}
 }
 
@@ -258,7 +260,7 @@ func (n *echoNode) Apply(string) error { return nil }
 
 func (n *echoNode) Observe() Observation {
 	s := fmt.Sprintf("pings:%d ops:0", n.core.pings)
-	return Observation{State: []byte(s), Human: s}
+	return Observation{Node: n.core.self, State: []byte(s), Value: s}
 }
 
 type echoSubject struct{ budget int }
@@ -308,8 +310,8 @@ func TestRunDrainsTheQueueAfterSettle(t *testing.T) {
 		t.Fatalf("trace must end with both observations at t=9 (last applied event), got %+v", last)
 	}
 	for i, o := range res.Final {
-		if o.Human != "pings:9 ops:0" {
-			t.Fatalf("node %d observed %q, want \"pings:9 ops:0\"", i, o.Human)
+		if o.Value != "pings:9 ops:0" {
+			t.Fatalf("node %d observed %q, want \"pings:9 ops:0\"", i, o.Value)
 		}
 	}
 }

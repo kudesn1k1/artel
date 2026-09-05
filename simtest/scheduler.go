@@ -15,10 +15,6 @@ type Result struct {
 	Violations []Violation
 }
 
-type Violation struct {
-	Oracle, Detail string
-}
-
 var (
 	errDropped = errors.New("failed to deliver: dropped")
 	errAckLost = errors.New("failed to ack: lost")
@@ -31,9 +27,9 @@ const drainCap = 10_000
 // Run simulates one scenario over a subject and returns the trace and the
 // final observations. A malformed scenario panics: scenarios are a testing
 // tool, and a bad one is a programmer error.
-func Run(s Scenario, sub Subject) Result {
+func Run(s Scenario, sub Subject, oracles ...Oracle) Result {
 	validateScenario(s)
-	r := newRun(s, sub)
+	r := newRun(s, sub, oracles...)
 	r.loop()
 	return r.observe()
 }
@@ -42,25 +38,27 @@ func Run(s Scenario, sub Subject) Result {
 // the nodes and the trace being written. Everything that happens goes
 // through the queue — a core is only ever called from step.
 type run struct {
-	s      Scenario
-	end    Dur // Horizon+Settle: no tick is scheduled at or after it
-	ids    []string
-	nodes  map[string]Node
-	policy faultPolicy
-	q      eventHeap
-	seq    uint64 // insertion counter: the tie-break at equal instants
-	now    Dur
-	trace  Trace
+	s       Scenario
+	end     Dur // Horizon+Settle: no tick is scheduled at or after it
+	ids     []string
+	nodes   map[string]Node
+	policy  faultPolicy
+	q       eventHeap
+	seq     uint64 // insertion counter: the tie-break at equal instants
+	now     Dur
+	trace   Trace
+	oracles []Oracle
 }
 
-func newRun(s Scenario, sub Subject) *run {
+func newRun(s Scenario, sub Subject, oracles ...Oracle) *run {
 	r := &run{
-		s:      s,
-		end:    s.Horizon + s.Settle,
-		ids:    make([]string, s.Nodes),
-		nodes:  make(map[string]Node, s.Nodes),
-		policy: newFaultPolicy(s.Seed, s.Faults),
-		trace:  Trace{Events: []Event{}},
+		s:       s,
+		end:     s.Horizon + s.Settle,
+		ids:     make([]string, s.Nodes),
+		nodes:   make(map[string]Node, s.Nodes),
+		policy:  newFaultPolicy(s.Seed, s.Faults),
+		trace:   Trace{Events: []Event{}},
+		oracles: oracles,
 	}
 	g := buildNodeGraph(s)
 	for i := range s.Nodes {
@@ -120,7 +118,7 @@ func (r *run) step(e queuedEvent) {
 			if !e.acked {
 				err = errAckLost
 			}
-			r.push(resultAt(r.now, e.peer, e.node, e.msg, err))
+			r.push(resultAt(r.now, e.peer, e.node, e.msg, err, e.sent))
 		}
 	case EventSendResult:
 		node.Core().SendResult(e.peer, e.msg.Kind, e.err)
@@ -136,11 +134,12 @@ func (r *run) step(e queuedEvent) {
 // row and a fast-fail result at now+1.
 func (r *run) send(from string, envs []artel.Envelope) {
 	for _, env := range envs {
-		r.trace.add(msgRow(EventSend, r.now, from, env.To, env.Msg))
+		idx := r.trace.add(sendMsgRow(EventSend, r.now, from, env.To, env.Msg))
+		seq := uint64(idx)
 
 		fates := r.policy.fate(from, env.To, r.now)
 		if len(fates) > 1 {
-			r.trace.add(msgRow(EventDup, r.now, from, env.To, env.Msg))
+			r.trace.add(msgRow(EventDup, r.now, from, env.To, env.Msg, seq))
 		}
 		for i, f := range fates {
 			if f.delivered {
@@ -152,15 +151,16 @@ func (r *run) send(from string, envs []artel.Envelope) {
 					msg:     env.Msg,
 					acked:   f.acked,
 					reports: i == 0, // one outcome per send, even when duplicated
+					sent:    seq,
 				})
 				continue
 			}
-			r.trace.add(msgRow(EventDrop, r.now, from, env.To, env.Msg))
+			r.trace.add(msgRow(EventDrop, r.now, from, env.To, env.Msg, seq))
 			var err error
 			if !f.acked {
 				err = errDropped
 			}
-			r.push(resultAt(r.now+1, from, env.To, env.Msg, err))
+			r.push(resultAt(r.now+1, from, env.To, env.Msg, err, seq))
 		}
 	}
 }
@@ -174,7 +174,15 @@ func (r *run) observe() Result {
 		final = append(final, r.nodes[id].Observe())
 		r.trace.add(Event{T: at, Kind: EventObserve, Node: id})
 	}
-	return Result{Trace: r.trace, Final: final, Violations: []Violation{}}
+
+	history := r.trace.History()
+	var violations []Violation
+	for _, o := range r.oracles {
+		v := o.Check(history, final)
+		violations = append(violations, v...)
+	}
+
+	return Result{Trace: r.trace, Final: final, Violations: violations}
 }
 
 func validateScenario(s Scenario) {
@@ -233,26 +241,35 @@ type queuedEvent struct {
 	// sendresult
 	err error
 
+	// deliver, sendresult
+	sent uint64
+
 	// op
 	op string
 }
 
 // resultAt is the sender learning the outcome of one send.
-func resultAt(at Dur, sender, peer string, msg artel.Message, err error) queuedEvent {
-	return queuedEvent{at: at, kind: EventSendResult, node: sender, peer: peer, msg: msg, err: err}
+func resultAt(at Dur, sender, peer string, msg artel.Message, err error, sent uint64) queuedEvent {
+	return queuedEvent{at: at, kind: EventSendResult, node: sender, peer: peer, msg: msg, err: err, sent: sent}
+}
+
+func sendMsgRow(kind EventKind, at Dur, node, peer string, msg artel.Message) Event {
+	return Event{T: at, Kind: kind, Node: node, Peer: peer, MsgKind: msg.Kind.String(), Size: len(msg.Payload)}
 }
 
 // msgRow is a trace row about one message, seen from node's side.
-func msgRow(kind EventKind, at Dur, node, peer string, msg artel.Message) Event {
-	return Event{T: at, Kind: kind, Node: node, Peer: peer, MsgKind: msg.Kind.String(), Size: len(msg.Payload)}
+func msgRow(kind EventKind, at Dur, node, peer string, msg artel.Message, sent uint64) Event {
+	return Event{T: at, Kind: kind, Node: node, Peer: peer, MsgKind: msg.Kind.String(), Size: len(msg.Payload), Sent: sent}
 }
 
 // toEvent projects a queued event onto its trace row.
 func toEvent(q queuedEvent) Event {
 	var e Event
 	switch q.kind {
-	case EventSend, EventDeliver, EventSendResult:
-		e = msgRow(q.kind, q.at, q.node, q.peer, q.msg)
+	case EventSend:
+		e = sendMsgRow(q.kind, q.at, q.node, q.peer, q.msg)
+	case EventDeliver, EventSendResult:
+		e = msgRow(q.kind, q.at, q.node, q.peer, q.msg, q.sent)
 	case EventOp:
 		e = Event{T: q.at, Kind: q.kind, Node: q.node, Op: q.op}
 	default:

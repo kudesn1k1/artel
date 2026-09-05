@@ -38,7 +38,7 @@ func RequireDeterministic(t testing.TB, s Scenario, sub Subject) {
 	}
 	for i := range a.Final {
 		if !bytes.Equal(a.Final[i].State, b.Final[i].State) {
-			t.Fatalf("simtest: scenario seed=%d is not deterministic, final state of n%d differs:\n run 1: %s\n run 2: %s", s.Seed, i, a.Final[i].Human, b.Final[i].Human)
+			t.Fatalf("simtest: scenario seed=%d is not deterministic, final state of n%d differs:\n run 1: %s\n run 2: %s", s.Seed, i, a.Final[i].Value, b.Final[i].Value)
 		}
 	}
 }

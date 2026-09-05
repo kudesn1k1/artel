@@ -71,7 +71,9 @@ func scenarioDigest(s Scenario) string {
 const laneGutter = 2
 
 // String renders the trace as swim lanes: one column per node, one line per
-// event, virtual time on the left. Meant for eyes; the JSONL is the format.
+// event, virtual time on the left. #N tags a message by its send row — on the
+// send itself and on every row about it — so copies, drops and outcomes pair
+// up by eye under reorder and dup. Meant for eyes; the JSONL is the format.
 func (t Trace) String() string {
 	var ids []string
 	lane := map[string]int{}
@@ -118,16 +120,18 @@ func cell(e Event) (head, tail string) {
 		msg = fmt.Sprintf("%s(%dB)", msg, e.Size)
 	}
 	switch e.Kind {
-	case EventSend, EventDrop, EventDup:
-		head = fmt.Sprintf("%s %s →%s", e.Kind, msg, e.Peer)
+	case EventSend:
+		head = fmt.Sprintf("%s %s →%s #%d", e.Kind, msg, e.Peer, e.Seq)
+	case EventDrop, EventDup:
+		head = fmt.Sprintf("%s %s →%s #%d", e.Kind, msg, e.Peer, e.Sent)
 	case EventDeliver:
-		head = fmt.Sprintf("%s %s ←%s", e.Kind, msg, e.Peer)
+		head = fmt.Sprintf("%s %s ←%s #%d", e.Kind, msg, e.Peer, e.Sent)
 	case EventSendResult:
 		outcome := "ok"
 		if e.Err != "" {
 			outcome = "err"
 		}
-		head = fmt.Sprintf("%s %s →%s %s", e.Kind, msg, e.Peer, outcome)
+		head = fmt.Sprintf("%s %s →%s #%d %s", e.Kind, msg, e.Peer, e.Sent, outcome)
 	case EventOp:
 		head = fmt.Sprintf("%s %s", e.Kind, e.Op)
 	default:

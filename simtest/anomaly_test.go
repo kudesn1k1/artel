@@ -44,12 +44,13 @@ func ofKind(events []Event, k EventKind) []Event {
 	return out
 }
 
-// shape strips Seq and collapses any error text to "<err>": the tables pin
+// shape strips the row identities (Seq, and the Sent link — checked by
+// requireLinked) and collapses any error text to "<err>": the tables pin
 // structure, not the policy's wording.
 func shape(events []Event) []Event {
 	out := make([]Event, len(events))
 	for i, e := range events {
-		e.Seq = 0
+		e.Seq, e.Sent = 0, 0
 		if e.Err != "" {
 			e.Err = "<err>"
 		}
@@ -157,6 +158,10 @@ func TestJitterReordersMessagesWithinBounds(t *testing.T) {
 			if e.T < sentAt+1 || e.T > sentAt+20 {
 				t.Fatalf("seed %d: ping %d delivered at t=%d, outside [%d, %d]", seed, e.Size, e.T, sentAt+1, sentAt+20)
 			}
+			// The send link must follow the message through the reorder, not FIFO.
+			if sent := res.Trace.Events[e.Sent]; sent.T != sentAt {
+				t.Fatalf("seed %d: ping %d names send row %d at t=%d, but was sent at t=%d", seed, e.Size, e.Sent, sent.T, sentAt)
+			}
 			if i > 0 && e.Size < got[i-1].Size {
 				reordered = true
 			}
@@ -189,6 +194,16 @@ func TestDupDeliversTwiceAndAcksOnce(t *testing.T) {
 		{T: 1, Kind: EventSendResult, Node: "n0", Peer: "n1", MsgKind: "push"},
 		{T: 1, Kind: EventSendResult, Node: "n1", Peer: "n0", MsgKind: "push"},
 	})
+	// The verdict and both copies name the one send they came from.
+	send := ofKind(at(res.Trace.Events, 0), EventSend)[0] // n0 → n1
+	if dup := ofKind(at(res.Trace.Events, 0), EventDup)[0]; dup.Sent != send.Seq {
+		t.Fatalf("dup row names send %d, want %d", dup.Sent, send.Seq)
+	}
+	for _, d := range ofKind(at(res.Trace.Events, 1), EventDeliver) {
+		if d.Node == "n1" && d.Sent != send.Seq {
+			t.Fatalf("a copy delivered to n1 names send %d, want %d: %+v", d.Sent, send.Seq, d)
+		}
+	}
 	expectOutcomes(t, sub, 6, 3, 0)
 }
 
@@ -229,8 +244,8 @@ func TestPartitionSplitsGroupFromTheRest(t *testing.T) {
 	})
 	want := []string{"pings:4 ops:0", "pings:5 ops:0", "pings:5 ops:0"}
 	for i, o := range res.Final {
-		if o.Human != want[i] {
-			t.Fatalf("n%d observed %q, want %q", i, o.Human, want[i])
+		if o.Value != want[i] {
+			t.Fatalf("n%d observed %q, want %q", i, o.Value, want[i])
 		}
 	}
 	for i, errs := range []int{2, 1, 1} {
