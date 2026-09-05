@@ -1,3 +1,3 @@
 module github.com/kudesn1k1/artel
 
-go 1.26.4
+go 1.27
