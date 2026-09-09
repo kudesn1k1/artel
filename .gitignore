@@ -10,3 +10,6 @@ docs/*
 *.exe
 *.test
 *.out
+
+# rapid writes a reproduction file per failing property test; rerun with -rapid.seed instead
+**/testdata/rapid/
