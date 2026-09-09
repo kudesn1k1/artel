@@ -63,7 +63,7 @@ func (s mutantState) Join(o mutantState) mutantState {
 }
 
 // mutantCounter is a counter replica over mutantState, shaped like GCounter:
-// an lww counter ships absolute values, a sum counter ships increments.
+// a lww counter ships absolute values, a sum counter ships increments.
 type mutantCounter struct {
 	id    string
 	state mutantState
