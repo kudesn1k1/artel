@@ -22,8 +22,7 @@ func (s PNCounterState) IsBottom() bool {
 }
 
 // PNCounterWire is the wire form of a PNCounterState: the increments and the
-// decrements, one count per replica each, ordered by replica id. Codecs
-// encode this, never the state itself.
+// decrements, one count per replica each, ordered by replica id.
 type PNCounterWire struct {
 	Inc []ReplicaCount `json:"inc,omitzero"`
 	Dec []ReplicaCount `json:"dec,omitzero"`
@@ -41,7 +40,7 @@ func PNCounterStateFromWire(w PNCounterWire) PNCounterState {
 
 // PNCounterJSON returns the JSON codec for PNCounterState.
 func PNCounterJSON() Codec[PNCounterState] {
-	return JSON(PNCounterState.Wire, PNCounterStateFromWire)
+	return JSONCodec(PNCounterState.Wire, PNCounterStateFromWire)
 }
 
 var _ DeltaState[PNCounterState] = PNCounterState{}

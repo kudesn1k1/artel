@@ -42,7 +42,7 @@ func (s mutantState) IsBottom() bool { return len(s.v) == 0 }
 // mutantJSON encodes the counts alone: the merge rule is not state, and a
 // decoded bottom adopts its partner's.
 func mutantJSON() artel.Codec[mutantState] {
-	return artel.JSON(
+	return artel.JSONCodec(
 		func(s mutantState) map[string]uint64 { return s.v },
 		func(v map[string]uint64) mutantState { return mutantState{v: v} },
 	)

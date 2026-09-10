@@ -2,20 +2,16 @@ package artel
 
 import "encoding/json/v2"
 
-// Codec turns states into bytes and back. The engine ships whatever Encode
-// returns and never looks inside; Decode sees exactly those bytes on the
-// other side. Encode must be deterministic — equal states, equal bytes —
-// because convergence is judged by comparing payloads, and a codec that
-// compresses or versions its output keeps that property by construction.
+// Codec turns states into bytes and back. Encode must be deterministic:
+// equal states, equal bytes.
 type Codec[S any] interface {
 	Encode(S) ([]byte, error)
 	Decode([]byte) (S, error)
 }
 
-// JSON returns a Codec that writes a state's wire form as JSON: readable,
-// deterministic, and the default for every type in this package. wire and
-// unwire convert between the state and its wire form.
-func JSON[S, W any](wire func(S) W, unwire func(W) S) Codec[S] {
+// JSONCodec returns a Codec that encodes a state's wire form as JSON. wire
+// and unwire convert between the state and its wire form.
+func JSONCodec[S, W any](wire func(S) W, unwire func(W) S) Codec[S] {
 	return jsonCodec[S, W]{wire: wire, unwire: unwire}
 }
 

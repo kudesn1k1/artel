@@ -5,12 +5,8 @@ import (
 	"testing"
 )
 
-// The wire path: a state hands out its wire form, a Codec turns the wire
-// form into bytes and back. The engine ships whatever the codec returns and
-// compares nothing, but the simulator judges convergence by payload bytes,
-// so a codec must be deterministic: equal states, equal bytes. The wire form
-// is ordered and holds no maps, which makes that true of any codec that
-// writes it in order.
+// A codec must be deterministic: equal states, equal bytes. The wire forms
+// are ordered and hold no maps, so any codec that writes them in order is.
 
 func encode[S any](t *testing.T, c Codec[S], s S) []byte {
 	t.Helper()
@@ -112,8 +108,7 @@ func TestGCounterJSON(t *testing.T) {
 	})
 }
 
-// The wire form is the state as codecs see it: one count per replica,
-// ordered by replica id, nothing when the state is bottom.
+// One count per replica, ordered by replica id, nothing at bottom.
 func TestGCounterWire(t *testing.T) {
 	a, b := NewGCounter("b"), NewGCounter("a")
 	a.IncrementBy(2)
@@ -238,14 +233,12 @@ func TestPNCounterWire(t *testing.T) {
 	}
 }
 
-// JSON is the codec constructor every type's default is built from; a user
-// type brings its own wire conversions.
 func TestJSONCodecOverAUserType(t *testing.T) {
 	type flag struct{ on bool }
 	type flagWire struct {
 		On bool `json:"on"`
 	}
-	codec := JSON(
+	codec := JSONCodec(
 		func(f flag) flagWire { return flagWire{On: f.on} },
 		func(w flagWire) flag { return flag{on: w.On} },
 	)

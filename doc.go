@@ -27,10 +27,10 @@
 //
 // # Codecs
 //
-// A state never encodes itself. Each type exposes a canonical wire form —
-// ordered, map-free, the same for equal states — and a JSON codec over it
-// ([GCounterJSON], [PNCounterJSON]). A codec with another format plugs in at
-// [NewEngine] without touching the type.
+// States travel as bytes produced by a [Codec]. Every type exposes its wire
+// form ([GCounterWire], [PNCounterWire]) and a JSON codec over it
+// ([GCounterJSON], [PNCounterJSON]); a codec with another format plugs in at
+// [NewEngine].
 //
 // # Status
 //

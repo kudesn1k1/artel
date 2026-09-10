@@ -34,9 +34,8 @@ const (
 	neverTimeOut = time.Hour
 )
 
-// decodeGCounter turns a wire payload back into a state with the codec the
-// engines under test ship with; the tests need it to inspect payloads they
-// intercept on the wire.
+// decodeGCounter decodes an intercepted payload with the codec the engines
+// under test use.
 func decodeGCounter(b []byte) (artel.GCounterState, error) {
 	return artel.GCounterJSON().Decode(b)
 }

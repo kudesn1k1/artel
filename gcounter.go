@@ -21,7 +21,7 @@ func (s GCounterState) IsBottom() bool {
 }
 
 // GCounterWire is the wire form of a GCounterState: one count per replica,
-// ordered by replica id. Codecs encode this, never the state itself.
+// ordered by replica id.
 type GCounterWire struct {
 	Counts []ReplicaCount `json:"counts,omitzero"`
 }
@@ -38,7 +38,7 @@ func GCounterStateFromWire(w GCounterWire) GCounterState {
 
 // GCounterJSON returns the JSON codec for GCounterState.
 func GCounterJSON() Codec[GCounterState] {
-	return JSON(GCounterState.Wire, GCounterStateFromWire)
+	return JSONCodec(GCounterState.Wire, GCounterStateFromWire)
 }
 
 var _ DeltaState[GCounterState] = GCounterState{}
