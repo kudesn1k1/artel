@@ -32,7 +32,7 @@ func (k Kind) String() string {
 }
 
 // Message is one gossip datagram. Payload is an OPAQUE serialized delta-state
-// (a state type's MarshalBinary output) — transports never interpret it.
+// (a Codec's output) — transports never interpret it.
 type Message struct {
 	From    string
 	Kind    Kind

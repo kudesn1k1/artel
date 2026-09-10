@@ -2,7 +2,6 @@ package artel
 
 import (
 	"context"
-	"encoding"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -10,17 +9,7 @@ import (
 	"time"
 )
 
-type State[S any] interface {
-	DeltaState[S]
-	encoding.BinaryMarshaler
-}
-
-type StatePtr[S any] interface {
-	*S
-	encoding.BinaryUnmarshaler
-}
-
-type pushJob[S State[S]] struct {
+type pushJob[S DeltaState[S]] struct {
 	peerId   string
 	snapshot S
 }
@@ -29,9 +18,10 @@ type pullJob = string
 
 const workerCount = 8
 
-type Engine[S State[S], PS StatePtr[S], R DeltaReplica[S]] struct {
+type Engine[S DeltaState[S], R DeltaReplica[S]] struct {
 	local       R
 	transport   Transport
+	codec       Codec[S]
 	peers       map[string]*peerOutbox[S]
 	ticker      *time.Ticker
 	pushJobs    chan pushJob[S]
@@ -45,16 +35,17 @@ type Engine[S State[S], PS StatePtr[S], R DeltaReplica[S]] struct {
 	stopOnce    sync.Once
 }
 
-func NewEngine[S State[S], PS StatePtr[S], R DeltaReplica[S]](local R, transport Transport) *Engine[S, PS, R] {
+func NewEngine[S DeltaState[S], R DeltaReplica[S]](local R, transport Transport, codec Codec[S]) *Engine[S, R] {
 	transportPeers := transport.Peers()
 	peers := make(map[string]*peerOutbox[S], len(transportPeers))
 	for _, peer := range transportPeers {
 		peers[peer] = &peerOutbox[S]{}
 	}
 
-	return &Engine[S, PS, R]{
+	return &Engine[S, R]{
 		local:       local,
 		transport:   transport,
+		codec:       codec,
 		peers:       peers,
 		pushJobs:    make(chan pushJob[S], 100), // TODO: review send jobs count
 		pullJobs:    make(chan pullJob, 100),    // TODO: review send jobs count
@@ -64,7 +55,7 @@ func NewEngine[S State[S], PS StatePtr[S], R DeltaReplica[S]](local R, transport
 	}
 }
 
-func (e *Engine[S, PS, R]) serve() error {
+func (e *Engine[S, R]) serve() error {
 	if err := e.transport.Serve(e.consume); err != nil {
 		return err
 	}
@@ -80,7 +71,7 @@ func (e *Engine[S, PS, R]) serve() error {
 // The engine's lifetime is bound to ctx: cancelling it stops the gossip loop
 // and the workers. Start is one-shot — to restart, build a new Engine with
 // NewEngine.
-func (e *Engine[S, PS, R]) Start(ctx context.Context, interval time.Duration) error {
+func (e *Engine[S, R]) Start(ctx context.Context, interval time.Duration) error {
 	if err := e.serve(); err != nil {
 		return err
 	}
@@ -121,7 +112,7 @@ func (e *Engine[S, PS, R]) Start(ctx context.Context, interval time.Duration) er
 // reports when it has). A transport close error is returned too, joined with
 // the ctx error when both occur. Stop is idempotent and safe to call on an
 // engine that was never started.
-func (e *Engine[S, PS, R]) Stop(ctx context.Context) error {
+func (e *Engine[S, R]) Stop(ctx context.Context) error {
 	if e.ticker != nil {
 		e.ticker.Stop()
 	}
@@ -148,16 +139,16 @@ func (e *Engine[S, PS, R]) Stop(ctx context.Context) error {
 
 // Stopped returns a channel that is closed once every engine goroutine has
 // exited — including after a Stop that gave up waiting.
-func (e *Engine[S, PS, R]) Stopped() <-chan struct{} {
+func (e *Engine[S, R]) Stopped() <-chan struct{} {
 	return e.stopped
 }
 
-func (e *Engine[S, PS, R]) consume(ctx context.Context, m Message) error {
+func (e *Engine[S, R]) consume(ctx context.Context, m Message) error {
 	if m.Kind == KindPull {
 		return e.sendFullState(ctx, m.From)
 	}
 
-	state, err := e.decode(m.Payload)
+	state, err := e.codec.Decode(m.Payload)
 	if err != nil {
 		return fmt.Errorf("decoding message: %w", err)
 	}
@@ -166,7 +157,7 @@ func (e *Engine[S, PS, R]) consume(ctx context.Context, m Message) error {
 	return nil
 }
 
-func (e *Engine[S, PS, R]) round() {
+func (e *Engine[S, R]) round() {
 	freshDelta := e.local.FlushDelta()
 	peers := e.transport.Peers()
 	pushJobs := make([]pushJob[S], 0, len(peers))
@@ -211,8 +202,8 @@ func (e *Engine[S, PS, R]) round() {
 	}
 }
 
-func (e *Engine[S, PS, R]) sendFullState(ctx context.Context, peerID string) error {
-	binary, err := e.local.State().MarshalBinary()
+func (e *Engine[S, R]) sendFullState(ctx context.Context, peerID string) error {
+	binary, err := e.codec.Encode(e.local.State())
 	if err != nil {
 		return err // not wrapping the error cause call stack show the problem origin, no need to wrap here
 	}
@@ -225,7 +216,7 @@ func (e *Engine[S, PS, R]) sendFullState(ctx context.Context, peerID string) err
 	return e.transport.Send(ctx, peerID, message)
 }
 
-func (e *Engine[S, PS, R]) sendLoop() {
+func (e *Engine[S, R]) sendLoop() {
 	for {
 		select {
 		case <-e.ctx.Done():
@@ -238,8 +229,8 @@ func (e *Engine[S, PS, R]) sendLoop() {
 	}
 }
 
-func (e *Engine[S, PS, R]) handlePush(job pushJob[S]) {
-	binary, err := job.snapshot.MarshalBinary()
+func (e *Engine[S, R]) handlePush(job pushJob[S]) {
+	binary, err := e.codec.Encode(job.snapshot)
 	if err != nil {
 		e.log.Error("failed to marshal payload", "err", err)
 		e.peers[job.peerId].pushFailed(job.snapshot)
@@ -265,7 +256,7 @@ func (e *Engine[S, PS, R]) handlePush(job pushJob[S]) {
 	e.peers[job.peerId].pushDone()
 }
 
-func (e *Engine[S, PS, R]) handlePull(job pullJob) {
+func (e *Engine[S, R]) handlePull(job pullJob) {
 	msg := Message{
 		From: e.transport.ID(),
 		Kind: KindPull,
@@ -283,13 +274,4 @@ func (e *Engine[S, PS, R]) handlePull(job pullJob) {
 	}
 
 	e.peers[job].pullDone()
-}
-
-func (e *Engine[S, PS, R]) decode(b []byte) (S, error) {
-	var s S
-	if err := PS(&s).UnmarshalBinary(b); err != nil {
-		var bottom S
-		return bottom, err
-	}
-	return s, nil
 }

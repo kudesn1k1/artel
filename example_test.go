@@ -13,7 +13,7 @@ func ExampleNewEngine() {
 	reg := transport.NewRegistry()
 	tr := transport.NewInProcess("a", nil, reg)
 
-	engine := artel.NewEngine(artel.NewGCounter("a"), tr)
+	engine := artel.NewEngine(artel.NewGCounter("a"), tr, artel.GCounterJSON())
 	_ = engine
 }
 

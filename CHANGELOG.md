@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `Codec` and the `JSON` codec constructor; wire forms for every state type
+  (`GCounterWire`, `PNCounterWire`, `ReplicaCount`) with `Wire()` /
+  `…FromWire` conversions, and per-type JSON codecs (`GCounterJSON`,
+  `PNCounterJSON`).
+
+### Changed
+
+- `NewEngine` takes a `Codec`; `Engine` has two type parameters.
+- Payloads are whatever the codec produces: the default JSON codec writes the
+  wire form, so bytes differ from 0.1.
+
+### Removed
+
+- `State`, `StatePtr`, and the `MarshalBinary` / `UnmarshalBinary` methods on
+  state types.
+
 ## [0.1.0] - 2026-08-20
 
 ### Added

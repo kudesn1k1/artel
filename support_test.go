@@ -34,18 +34,14 @@ const (
 	neverTimeOut = time.Hour
 )
 
-// decodeGCounter turns a wire payload back into a state. The engine derives this
-// for itself from its type parameters; the tests need it to inspect payloads they
+// decodeGCounter turns a wire payload back into a state with the codec the
+// engines under test ship with; the tests need it to inspect payloads they
 // intercept on the wire.
 func decodeGCounter(b []byte) (artel.GCounterState, error) {
-	var s artel.GCounterState
-	if err := s.UnmarshalBinary(b); err != nil {
-		return artel.GCounterState{}, err
-	}
-	return s, nil
+	return artel.GCounterJSON().Decode(b)
 }
 
-type gEngine = artel.Engine[artel.GCounterState, *artel.GCounterState, *artel.GCounter]
+type gEngine = artel.Engine[artel.GCounterState, *artel.GCounter]
 
 // node is one replica + its transport + its engine.
 //
@@ -71,7 +67,7 @@ func newNode(t *testing.T, reg *transport.Registry, id string, peers ...string) 
 func newNodeAs(t *testing.T, reg *transport.Registry, nodeID, replicaID string, peers ...string) *node {
 	t.Helper()
 	rep := artel.NewGCounter(replicaID)
-	e := artel.NewEngine(rep, transport.NewInProcess(nodeID, peers, reg))
+	e := artel.NewEngine(rep, transport.NewInProcess(nodeID, peers, reg), artel.GCounterJSON())
 	t.Cleanup(func() { _ = e.Stop(context.Background()) })
 	return &node{nodeID: nodeID, replicaID: replicaID, replica: rep, engine: e}
 }

@@ -1,8 +1,6 @@
 package artel
 
 import (
-	"encoding"
-	"encoding/json"
 	"maps"
 	"sync"
 )
@@ -23,25 +21,30 @@ func (s PNCounterState) IsBottom() bool {
 	return len(s.inc) == 0 && len(s.dec) == 0
 }
 
-var _ encoding.BinaryMarshaler = PNCounterState{}
-var _ encoding.BinaryUnmarshaler = (*PNCounterState)(nil)
-
-func (s PNCounterState) MarshalBinary() ([]byte, error) {
-	return json.Marshal([]map[string]uint64{s.inc, s.dec})
+// PNCounterWire is the wire form of a PNCounterState: the increments and the
+// decrements, one count per replica each, ordered by replica id. Codecs
+// encode this, never the state itself.
+type PNCounterWire struct {
+	Inc []ReplicaCount `json:"inc,omitzero"`
+	Dec []ReplicaCount `json:"dec,omitzero"`
 }
 
-func (s *PNCounterState) UnmarshalBinary(data []byte) error {
-	v := make([]map[string]uint64, 2)
-	if err := json.Unmarshal(data, &v); err != nil {
-		return err
-	}
-	s.inc = v[0]
-	s.dec = v[1]
-
-	return nil
+// Wire returns the state's wire form.
+func (s PNCounterState) Wire() PNCounterWire {
+	return PNCounterWire{Inc: sortedCounts(s.inc), Dec: sortedCounts(s.dec)}
 }
 
-var _ DeltaState[PNCounterState] = (*PNCounterState)(nil)
+// PNCounterStateFromWire rebuilds a state from its wire form.
+func PNCounterStateFromWire(w PNCounterWire) PNCounterState {
+	return PNCounterState{inc: countsToMap(w.Inc), dec: countsToMap(w.Dec)}
+}
+
+// PNCounterJSON returns the JSON codec for PNCounterState.
+func PNCounterJSON() Codec[PNCounterState] {
+	return JSON(PNCounterState.Wire, PNCounterStateFromWire)
+}
+
+var _ DeltaState[PNCounterState] = PNCounterState{}
 var _ DeltaReplica[PNCounterState] = (*PNCounter)(nil)
 
 func NewPNCounter(id string) *PNCounter {

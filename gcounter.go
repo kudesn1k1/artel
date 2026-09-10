@@ -1,8 +1,6 @@
 package artel
 
 import (
-	"encoding"
-	"encoding/json"
 	"maps"
 	"sync"
 )
@@ -22,18 +20,28 @@ func (s GCounterState) IsBottom() bool {
 	return len(s.values) == 0
 }
 
-func (s GCounterState) MarshalBinary() (data []byte, err error) {
-	return json.Marshal(s.values)
+// GCounterWire is the wire form of a GCounterState: one count per replica,
+// ordered by replica id. Codecs encode this, never the state itself.
+type GCounterWire struct {
+	Counts []ReplicaCount `json:"counts,omitzero"`
 }
 
-func (s *GCounterState) UnmarshalBinary(data []byte) error {
-	return json.Unmarshal(data, &s.values)
+// Wire returns the state's wire form.
+func (s GCounterState) Wire() GCounterWire {
+	return GCounterWire{Counts: sortedCounts(s.values)}
 }
 
-var _ encoding.BinaryMarshaler = GCounterState{}
-var _ encoding.BinaryUnmarshaler = (*GCounterState)(nil)
+// GCounterStateFromWire rebuilds a state from its wire form.
+func GCounterStateFromWire(w GCounterWire) GCounterState {
+	return GCounterState{values: countsToMap(w.Counts)}
+}
 
-var _ DeltaState[GCounterState] = (*GCounterState)(nil)
+// GCounterJSON returns the JSON codec for GCounterState.
+func GCounterJSON() Codec[GCounterState] {
+	return JSON(GCounterState.Wire, GCounterStateFromWire)
+}
+
+var _ DeltaState[GCounterState] = GCounterState{}
 var _ DeltaReplica[GCounterState] = (*GCounter)(nil)
 
 func NewGCounter(id string) *GCounter {

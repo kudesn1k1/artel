@@ -12,10 +12,10 @@
 // # Engine
 //
 // [Engine] runs anti-entropy gossip for one replica over a pluggable
-// [Transport]:
+// [Transport], shipping states as bytes through a [Codec]:
 //
 //	c := artel.NewGCounter("node-a")
-//	e := artel.NewEngine(c, tr)
+//	e := artel.NewEngine(c, tr, artel.GCounterJSON())
 //	if err := e.Start(ctx, 500*time.Millisecond); err != nil {
 //		// ...
 //	}
@@ -24,6 +24,13 @@
 // The transport subpackage provides an HTTP implementation for the real
 // network and an in-process one for deterministic tests; anything satisfying
 // [Transport] plugs in.
+//
+// # Codecs
+//
+// A state never encodes itself. Each type exposes a canonical wire form —
+// ordered, map-free, the same for equal states — and a JSON codec over it
+// ([GCounterJSON], [PNCounterJSON]). A codec with another format plugs in at
+// [NewEngine] without touching the type.
 //
 // # Status
 //

@@ -95,7 +95,7 @@ func run() error {
 
 	replica := artel.NewGCounter(replicaID)
 	wire := newWatchedTransport(transport.NewHTTP(*nodeID, *gossip, peers))
-	eng := artel.NewEngine(replica, wire)
+	eng := artel.NewEngine(replica, wire, artel.GCounterJSON())
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -178,33 +178,23 @@ func incarnation(nodeID string) (string, error) {
 	return fmt.Sprintf("%s#%x", nodeID, b), nil
 }
 
-// breakdown reads the per-replica contributions out of the state. GCounterState
-// marshals as exactly that map, so the demo can show it without the type having
-// to expose its internals.
+// breakdown reads the per-replica contributions out of the state's wire form.
 func breakdown(replica *artel.GCounter) map[string]uint64 {
-	raw, err := replica.State().MarshalBinary()
-	if err != nil {
-		return nil
-	}
-	var m map[string]uint64
-	if err := json.Unmarshal(raw, &m); err != nil {
-		return nil
+	counts := replica.State().Wire().Counts
+	m := make(map[string]uint64, len(counts))
+	for _, c := range counts {
+		m[c.Replica] = c.N
 	}
 	return m
 }
 
 func apiHandler(replica *artel.GCounter, nodeID, replicaID string) http.Handler {
 	status := func(w http.ResponseWriter) {
-		raw, err := replica.State().MarshalBinary()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
 		writeJSON(w, map[string]any{
 			"node":    nodeID,
 			"replica": replicaID,
 			"value":   replica.Value(),
-			"state":   json.RawMessage(raw),
+			"state":   replica.State().Wire(),
 		})
 	}
 

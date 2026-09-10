@@ -6,6 +6,6 @@ import "time"
 
 const WorkerCount = workerCount
 
-func (e *Engine[S, PS, R]) Round() { e.round() }
+func (e *Engine[S, R]) Round() { e.round() }
 
-func (e *Engine[S, PS, R]) SetSendTimeout(d time.Duration) { e.sendTimeout = d }
+func (e *Engine[S, R]) SetSendTimeout(d time.Duration) { e.sendTimeout = d }

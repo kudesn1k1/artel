@@ -1,7 +1,6 @@
 package simtest
 
 import (
-	"encoding/json"
 	"fmt"
 	"maps"
 	"strconv"
@@ -36,13 +35,18 @@ type mutantState struct {
 	v     map[string]uint64
 }
 
-var _ artel.State[mutantState] = mutantState{}
+var _ artel.DeltaState[mutantState] = mutantState{}
 
 func (s mutantState) IsBottom() bool { return len(s.v) == 0 }
 
-func (s mutantState) MarshalBinary() ([]byte, error) { return json.Marshal(s.v) }
-
-func (s *mutantState) UnmarshalBinary(b []byte) error { return json.Unmarshal(b, &s.v) }
+// mutantJSON encodes the counts alone: the merge rule is not state, and a
+// decoded bottom adopts its partner's.
+func mutantJSON() artel.Codec[mutantState] {
+	return artel.JSON(
+		func(s mutantState) map[string]uint64 { return s.v },
+		func(v map[string]uint64) mutantState { return mutantState{v: v} },
+	)
+}
 
 func (s mutantState) Join(o mutantState) mutantState {
 	m := s.merge
@@ -121,7 +125,7 @@ func (c *mutantCounter) apply(n int) error {
 
 func (c *mutantCounter) value() string { return strconv.FormatUint(c.Value(), 10) }
 
-func (c *mutantCounter) snapshot() ([]byte, error) { return c.State().MarshalBinary() }
+func (c *mutantCounter) snapshot() ([]byte, error) { return mutantJSON().Encode(c.State()) }
 
 // mutantType runs the reference core over a counter whose merge breaks the
 // given law.
@@ -131,7 +135,7 @@ type mutantTypeSubject struct{ merge mutantMerge }
 
 func (s mutantTypeSubject) NewNode(id string, incarnation int, peers []string) Node {
 	rep := newMutantCounter(replicaID(id, incarnation), s.merge)
-	return &counterNode{id: id, core: newRefCore(id, rep, peers), rep: rep}
+	return &counterNode{id: id, core: newRefCore(id, rep, peers, mutantJSON()), rep: rep}
 }
 
 // coreMutant wraps every core a subject builds; the node keeps the subject's

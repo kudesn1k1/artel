@@ -36,7 +36,9 @@ item, that is a bug — please report it.
   state by pulling from live peers. If every replica is down at once,
   unreplicated updates are lost. Persistence is a scheduled pre-1.0 milestone.
 - **Wire-format stability.** Payload encodings may change between 0.x
-  releases without a migration path.
+  releases without a migration path. A payload is whatever the configured
+  `Codec` produces; the built-in JSON codecs are deterministic — equal
+  states, equal bytes — and the simulator relies on that.
 
 ## Never promised
 

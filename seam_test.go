@@ -42,7 +42,7 @@ func TestEngineOverHTTP(t *testing.T) {
 	engines := make(map[string]*gEngine, len(addrs))
 	for id := range addrs {
 		rep := artel.NewGCounter(id + "#1")
-		e := artel.NewEngine(rep, transport.NewHTTP(id, addrs[id], peersOf(id)))
+		e := artel.NewEngine(rep, transport.NewHTTP(id, addrs[id], peersOf(id)), artel.GCounterJSON())
 		t.Cleanup(func() { _ = e.Stop(context.Background()) })
 		if err := e.Start(context.Background(), tick); err != nil {
 			t.Fatalf("start %s: %v", id, err)
@@ -70,7 +70,7 @@ func TestEngineOverHTTP(t *testing.T) {
 
 	c2 := artel.NewGCounter("C#2")
 	c2.IncrementBy(1)
-	e2 := artel.NewEngine(c2, transport.NewHTTP("C", addrs["C"], peersOf("C")))
+	e2 := artel.NewEngine(c2, transport.NewHTTP("C", addrs["C"], peersOf("C")), artel.GCounterJSON())
 	t.Cleanup(func() { _ = e2.Stop(context.Background()) })
 	if err := e2.Start(context.Background(), tick); err != nil {
 		t.Fatalf("restart C: %v", err)
