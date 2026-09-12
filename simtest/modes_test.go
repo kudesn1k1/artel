@@ -9,7 +9,7 @@ import (
 	"github.com/kudesn1k1/artel"
 )
 
-// Trust tests for the modes (D11b): a zero-CRDT subject whose failure is a
+// Trust tests for the modes: a zero-CRDT subject whose failure is a
 // plain function of the scenario's ops, so every verdict below is predicted
 // by hand.
 //

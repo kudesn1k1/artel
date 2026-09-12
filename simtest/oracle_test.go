@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// Trust tests for the oracles (D11b, "oracles without the sim"): every
+// Trust tests for the oracles, run without the simulator: every
 // history and every final below is built by hand, every verdict is computed
 // by hand. Convergence and CounterSum judge the outcome; EventualDelivery
 // judges the dissemination pattern the subject claims — Direct: the origin

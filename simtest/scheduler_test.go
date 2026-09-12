@@ -9,7 +9,7 @@ import (
 	"github.com/kudesn1k1/artel"
 )
 
-// Trust tests for the DES scheduler (D11b): a zero-CRDT fixture and
+// Trust tests for the DES scheduler: a zero-CRDT fixture and
 // hand-computed expected traces. The tables below are NORMATIVE — they pin
 // the event semantics from the plan: first tick of every node at t=0 and
 // every Interval after; ideal network (Task 3) delivers with a fixed delay

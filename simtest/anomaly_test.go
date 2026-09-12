@@ -7,7 +7,7 @@ import (
 	"github.com/kudesn1k1/artel"
 )
 
-// Trust tests for the anomaly policy (D11b): hand-computed traces over the
+// Trust tests for the anomaly policy: hand-computed traces over the
 // zero-CRDT ping fixture. The tables are NORMATIVE — they pin the semantics:
 //
 //   - a fault window is half-open [At, Until) in SEND time: the fate of a

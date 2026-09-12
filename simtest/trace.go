@@ -39,7 +39,7 @@ type Event struct {
 	Node string    `json:"node"`
 	Peer string    `json:"peer,omitempty"`
 	// MsgKind and Size describe a carried message without interpreting it:
-	// the harness is CRDT-blind (D11), payload bytes are reproduced by the
+	// the harness is CRDT-blind, payload bytes are reproduced by the
 	// seed, and size alone separates a full-state answer from a small delta.
 	MsgKind string `json:"msg_kind,omitempty"` // artel kind on the wire: "push"/"pull"
 	Size    int    `json:"size,omitempty"`     // payload bytes
