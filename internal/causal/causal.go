@@ -88,7 +88,7 @@ func (c CausalContext) Join(other CausalContext) CausalContext {
 	})
 
 	for _, dot := range dots {
-		if res.VV[dot.Replica] >= dot.N {
+		if res.VV.Contains(dot) {
 			continue
 		}
 		if res.VV[dot.Replica]+1 == dot.N {
