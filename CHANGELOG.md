@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `Codec` and the `JSON` codec constructor; wire forms for every state type
+- `Codec` and the `JSONCodec` constructor; wire forms for every state type
   (`GCounterWire`, `PNCounterWire`, `ReplicaCount`) with `Wire()` /
   `…FromWire` conversions, and per-type JSON codecs (`GCounterJSON`,
   `PNCounterJSON`).
