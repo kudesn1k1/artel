@@ -1,18 +1,22 @@
 package simtest
 
 import (
+	"cmp"
 	"fmt"
 	"maps"
+	"slices"
 	"strconv"
 
 	"github.com/kudesn1k1/artel"
+	"github.com/kudesn1k1/artel/internal/causal"
 )
 
 // Mutants are known-broken subjects for calibration: each seeds one fault the
 // harness must be able to see, and a mutant the oracles do not kill is a
-// blind spot, not a passing test. Two break the type's merge and two break the
-// core's in-flight accounting; the reference protocol and the reference types
-// are never edited.
+// blind spot, not a passing test. Two break the type's merge, two break the
+// core's in-flight accounting, and one breaks the causal context a delta
+// carries on the wire; the reference protocol and the reference types are
+// never edited.
 
 // mutantMerge is the lattice law a mutant counter breaks. The zero value
 // belongs to a bottom, which has no rule of its own and adopts its partner's.
@@ -181,4 +185,34 @@ func leaky(sub Subject) Subject {
 
 func stuck(sub Subject) Subject {
 	return coreMutant{sub, func(c artel.Core) artel.Core { return stuckCore{c} }}
+}
+
+// vectorOnlyJSON ships a delta's causal context as a bare version vector:
+// every loose dot is folded into the vector before encoding, so the receiver
+// reads a context that claims every earlier dot of that replica, carried or
+// not. A set decoding it cannot tell a gap from a continuation and never
+// refuses; what the context over-claims, the join deletes.
+func vectorOnlyJSON() artel.Codec[causal.ORSetState[string]] {
+	return artel.JSONCodec(
+		func(s causal.ORSetState[string]) causal.ORSetWire[string] {
+			w := s.Wire()
+			if len(w.Dots) == 0 {
+				return w
+			}
+			last := make(map[string]uint64, len(w.VV)+len(w.Dots))
+			for _, d := range w.VV {
+				last[d.Replica] = d.N
+			}
+			for _, d := range w.Dots {
+				last[d.Replica] = max(last[d.Replica], d.N)
+			}
+			vv := make([]causal.Dot, 0, len(last))
+			for r, n := range last {
+				vv = append(vv, causal.Dot{Replica: r, N: n})
+			}
+			slices.SortFunc(vv, func(a, b causal.Dot) int { return cmp.Compare(a.Replica, b.Replica) })
+			return causal.ORSetWire[string]{Entries: w.Entries, VV: vv}
+		},
+		causal.ORSetStateFromWire[string],
+	)
 }
