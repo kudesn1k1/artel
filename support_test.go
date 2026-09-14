@@ -56,14 +56,14 @@ type node struct {
 
 // newNode wires a node onto the shared registry but does NOT start gossiping.
 // Stopping it is registered as cleanup, so a test may also stop it early.
-func newNode(t *testing.T, reg *transport.Registry, id string, peers ...string) *node {
+func newNode(t *testing.T, reg *transport.InProcessRegistry, id string, peers ...string) *node {
 	t.Helper()
 	return newNodeAs(t, reg, id, id, peers...)
 }
 
 // newNodeAs is newNode with the node id and the replica id given separately —
 // what a restart actually looks like: same address, new incarnation.
-func newNodeAs(t *testing.T, reg *transport.Registry, nodeID, replicaID string, peers ...string) *node {
+func newNodeAs(t *testing.T, reg *transport.InProcessRegistry, nodeID, replicaID string, peers ...string) *node {
 	t.Helper()
 	rep := artel.NewGCounter(replicaID)
 	e := artel.NewEngine(rep, transport.NewInProcess(nodeID, peers, reg), artel.GCounterJSON())
@@ -81,7 +81,7 @@ func (n *node) start(t *testing.T) {
 // mesh builds a running full-mesh cluster: every node gossips to all the others.
 func mesh(t *testing.T, ids ...string) map[string]*node {
 	t.Helper()
-	reg := transport.NewRegistry()
+	reg := transport.NewInProcessRegistry()
 	nodes := make(map[string]*node, len(ids))
 	for _, id := range ids {
 		peers := make([]string, 0, len(ids)-1)
@@ -265,7 +265,7 @@ type probe struct {
 	received []artel.Message
 }
 
-func newProbe(t *testing.T, reg *transport.Registry, id string, peers ...string) *probe {
+func newProbe(t *testing.T, reg *transport.InProcessRegistry, id string, peers ...string) *probe {
 	t.Helper()
 	p := &probe{tr: transport.NewInProcess(id, peers, reg)}
 	if err := p.tr.Serve(func(_ context.Context, m artel.Message) error {

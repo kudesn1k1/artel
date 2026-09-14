@@ -112,7 +112,7 @@ func TestEngineKeepsConvergingAcrossRounds(t *testing.T) {
 // it with exactly one. This one drives a second type end to end, and with
 // decrements, so PNCounterState's own Join/IsBottom/codec ride the same path.
 func TestEngineConvergesWithPNCounter(t *testing.T) {
-	reg := transport.NewRegistry()
+	reg := transport.NewInProcessRegistry()
 
 	newPN := func(id string, peers ...string) *artel.PNCounter {
 		rep := artel.NewPNCounter(id)
@@ -140,7 +140,7 @@ func TestEngineConvergesWithPNCounter(t *testing.T) {
 // may hold a lock across that path — this test hangs (and the suite times out)
 // if anything ever does.
 func TestEngineStartsConcurrently(t *testing.T) {
-	reg := transport.NewRegistry()
+	reg := transport.NewInProcessRegistry()
 	ids := []string{"A", "B", "C", "D"}
 
 	nodes := make(map[string]*node, len(ids))
@@ -185,7 +185,7 @@ func TestEngineStartsConcurrently(t *testing.T) {
 // A failed Send must put the snapshot back into the peer's buffer. Nothing is
 // incremented after the link heals, so only retention can still deliver.
 func TestEngineRetainsDeltaWhenSendFails(t *testing.T) {
-	reg := transport.NewRegistry()
+	reg := transport.NewInProcessRegistry()
 
 	link := &flakyLink{Transport: transport.NewInProcess("A", []string{"B"}, reg)}
 	a := artel.NewGCounter("A")
@@ -219,7 +219,7 @@ func TestEngineRetainsDeltaWhenSendFails(t *testing.T) {
 // Same mechanism, network-shaped: a peer that was never reachable (not yet
 // registered) must still receive everything once it shows up.
 func TestEngineDeliversToPeerThatJoinsLate(t *testing.T) {
-	reg := transport.NewRegistry()
+	reg := transport.NewInProcessRegistry()
 
 	// The wrapper is only here to count attempts — it never breaks the link;
 	// sends fail on their own because "B" is not registered yet.
@@ -247,7 +247,7 @@ func TestEngineDeliversToPeerThatJoinsLate(t *testing.T) {
 // been drained out of the replica by FlushDelta, so a round that merely skips
 // leaves it nowhere at all.
 func TestEngineKeepsDeltasFlushedWhileAPushIsInFlight(t *testing.T) {
-	reg := transport.NewRegistry()
+	reg := transport.NewInProcessRegistry()
 
 	gate := newGatedLink(transport.NewInProcess("A", []string{"B"}, reg))
 	a := artel.NewGCounter("A")
@@ -287,7 +287,7 @@ func TestEngineKeepsDeltasFlushedWhileAPushIsInFlight(t *testing.T) {
 // The companion test below covers what happens once stalled peers outnumber the
 // pool — that case needs deadlines, and nothing else can save it.
 func TestEngineKeepsServingHealthyPeersWhileOneStalls(t *testing.T) {
-	reg := transport.NewRegistry()
+	reg := transport.NewInProcessRegistry()
 
 	// The stalled peer is listed first, so its jobs are queued ahead of B's.
 	gate := newPartialGate(transport.NewInProcess("A", []string{"stalled", "B"}, reg), "stalled")
@@ -319,7 +319,7 @@ func TestEngineKeepsServingHealthyPeersWhileOneStalls(t *testing.T) {
 // on its own, without the peer's cooperation. Give the pool more stalled peers
 // than it has workers and check the healthy one is still served.
 func TestEngineKeepsServingWhenStalledPeersOutnumberTheWorkers(t *testing.T) {
-	reg := transport.NewRegistry()
+	reg := transport.NewInProcessRegistry()
 
 	stalled := make([]string, 0, artel.WorkerCount)
 	for i := range artel.WorkerCount {
@@ -354,7 +354,7 @@ func TestEngineKeepsServingWhenStalledPeersOutnumberTheWorkers(t *testing.T) {
 // exactly as it does on a transport error. Nothing is incremented after the wire
 // heals — only retention can still deliver.
 func TestEngineRetainsDeltaWhenASendTimesOut(t *testing.T) {
-	reg := transport.NewRegistry()
+	reg := transport.NewInProcessRegistry()
 
 	gate := newGatedLink(transport.NewInProcess("A", []string{"B"}, reg))
 	a := artel.NewGCounter("A")
@@ -396,7 +396,7 @@ func TestEngineRetainsDeltaWhenASendTimesOut(t *testing.T) {
 // the next increment and hide the missing catch-up. Only a Pull of full state on
 // (re)join fixes this.
 func TestEngineCatchesUpAfterRestart(t *testing.T) {
-	reg := transport.NewRegistry()
+	reg := transport.NewInProcessRegistry()
 	a := newNode(t, reg, "A", "B")
 	b := newNode(t, reg, "B", "A")
 	a.start(t)
@@ -433,7 +433,7 @@ func TestEngineCatchesUpAfterRestart(t *testing.T) {
 // This test increments before Start on purpose: that is the window, and doing it
 // there makes it deterministic instead of a race the test would usually lose.
 func TestEngineNewIncarnationKeepsAnUpdateMadeBeforeCatchUp(t *testing.T) {
-	reg := transport.NewRegistry()
+	reg := transport.NewInProcessRegistry()
 	a := newNode(t, reg, "A", "B")
 	b := newNode(t, reg, "B", "A")
 	a.start(t)
@@ -464,7 +464,7 @@ func TestEngineNewIncarnationKeepsAnUpdateMadeBeforeCatchUp(t *testing.T) {
 // A Pull carries no payload: consume must dispatch on Kind and answer with a
 // Push of the local full state instead of trying to merge an empty message.
 func TestEngineAnswersPullWithFullState(t *testing.T) {
-	reg := transport.NewRegistry()
+	reg := transport.NewInProcessRegistry()
 	a := newNode(t, reg, "A") // no peers: this is about the inbound path only
 	a.start(t)
 	a.replica.IncrementBy(7)
@@ -521,7 +521,7 @@ func TestEnginePullSurvivesAFullSendQueue(t *testing.T) {
 
 func TestEngineStop(t *testing.T) {
 	t.Run("is idempotent", func(t *testing.T) {
-		reg := transport.NewRegistry()
+		reg := transport.NewInProcessRegistry()
 		n := newNode(t, reg, "A")
 		n.start(t)
 
@@ -563,7 +563,7 @@ func TestEngineStop(t *testing.T) {
 	// note the gate is never opened here, so nothing else can release it, and the
 	// deadline is set past the test's own patience so it cannot be the rescuer.
 	t.Run("releases a send parked in the transport", func(t *testing.T) {
-		reg := transport.NewRegistry()
+		reg := transport.NewInProcessRegistry()
 		gate := newGatedLink(transport.NewInProcess("A", []string{"B"}, reg))
 		a := artel.NewGCounter("A")
 		ae := artel.NewEngine(a, gate, artel.GCounterJSON())

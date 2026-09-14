@@ -8,27 +8,27 @@ import (
 	"github.com/kudesn1k1/artel"
 )
 
-// Registry is a shared in-memory switchboard: every InProcess transport in one
+// InProcessRegistry is a shared in-memory switchboard: every InProcess transport in one
 // test registers its handler here, and Send routes through it. Delivery is
 // SYNCHRONOUS — Send runs the peer's handler on the caller's goroutine and
 // returns only after it finishes. That is what makes convergence tests
 // deterministic: no wall-clock timing, no background goroutines to wait on.
-type Registry struct {
+type InProcessRegistry struct {
 	mu       sync.Mutex
 	handlers map[string]artel.Handler
 }
 
-func NewRegistry() *Registry {
-	return &Registry{handlers: make(map[string]artel.Handler)}
+func NewInProcessRegistry() *InProcessRegistry {
+	return &InProcessRegistry{handlers: make(map[string]artel.Handler)}
 }
 
-func (r *Registry) register(id string, h artel.Handler) {
+func (r *InProcessRegistry) register(id string, h artel.Handler) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.handlers[id] = h
 }
 
-func (r *Registry) deliver(ctx context.Context, to string, m artel.Message) error {
+func (r *InProcessRegistry) deliver(ctx context.Context, to string, m artel.Message) error {
 	r.mu.Lock()
 	h := r.handlers[to]
 	r.mu.Unlock() // release BEFORE calling h: a handler may Send again (Pull → Push),
@@ -39,17 +39,17 @@ func (r *Registry) deliver(ctx context.Context, to string, m artel.Message) erro
 	return h(ctx, m)
 }
 
-// InProcess is a Transport backed by a shared Registry. Use one Registry per
+// InProcess is a Transport backed by a shared InProcessRegistry. Use one InProcessRegistry per
 // test and one InProcess per node.
 type InProcess struct {
 	id    string
 	peers []string
-	reg   *Registry
+	reg   *InProcessRegistry
 }
 
 var _ artel.Transport = (*InProcess)(nil)
 
-func NewInProcess(id string, peers []string, reg *Registry) *InProcess {
+func NewInProcess(id string, peers []string, reg *InProcessRegistry) *InProcess {
 	return &InProcess{id: id, peers: peers, reg: reg}
 }
 

@@ -10,7 +10,7 @@ import (
 // Compiles with zero explicit type arguments: type inference is part of the
 // public API, and this example breaks the build if it regresses.
 func ExampleNewEngine() {
-	reg := transport.NewRegistry()
+	reg := transport.NewInProcessRegistry()
 	tr := transport.NewInProcess("a", nil, reg)
 
 	engine := artel.NewEngine(artel.NewGCounter("a"), tr, artel.GCounterJSON())

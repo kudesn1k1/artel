@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - `NewEngine` takes a `Codec`; `Engine` has two type parameters.
+- `transport.Registry` is now `transport.InProcessRegistry` and `NewRegistry` is
+  `NewInProcessRegistry`: the name says which transport the switchboard serves.
 - Payloads are whatever the codec produces: the default JSON codec writes the
   wire form, so bytes differ from 0.1.
 
