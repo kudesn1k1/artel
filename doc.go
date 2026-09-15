@@ -32,6 +32,14 @@
 // ([GCounterJSON], [PNCounterJSON]); a codec with another format plugs in at
 // [NewEngine].
 //
+// # Testing
+//
+// The simtest subpackage runs a type and its protocol core through a
+// deterministic simulation of an adversarial network — drops, delays,
+// duplicates, partitions — with oracles that judge convergence and delivery,
+// stress runs over generated scenarios and a shrinker for failures, and a
+// chaos transport that puts a running engine under the same anomalies.
+//
 // # Status
 //
 // Pre-1.0: the API is not stable yet, and the engine currently runs an interim

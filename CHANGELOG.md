@@ -5,10 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-09-15
 
 ### Added
 
+- `Core` and `Envelope`: the sans-IO protocol contract that a simulator or an
+  engine drives.
+- `simtest`: a deterministic simulator for protocol cores over an adversarial
+  network (`Scenario`, `Run`, anomaly windows for drops, delays, duplicates,
+  partitions and lost acks), oracles (`Convergence`, `CounterSum`,
+  `EventualDelivery`), `Stress` and `Shrink` over seed-generated scenarios, a
+  byte-exact `Trace` with JSON lines export and `RequireDeterministic`, and
+  `Chaos`, a transport decorator that puts a running engine under the same
+  anomalies. Experimental until 1.0.
+- An internal causal core (dots, version vectors, causal join) and a delta
+  OR-Set on it, not yet public: the simulator shows the interim protocol
+  cannot deliver the causal context the set needs, so the set waits for the
+  target protocol.
 - `Codec` and the `JSONCodec` constructor; wire forms for every state type
   (`GCounterWire`, `PNCounterWire`, `ReplicaCount`) with `Wire()` /
   `…FromWire` conversions, and per-type JSON codecs (`GCounterJSON`,

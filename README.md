@@ -26,7 +26,7 @@ tr := transport.NewHTTP("node-a", "127.0.0.1:8001", map[string]string{
 	"node-b": "http://127.0.0.1:8002",
 })
 
-e := artel.NewEngine(c, tr)
+e := artel.NewEngine(c, tr, artel.GCounterJSON())
 if err := e.Start(ctx, 500*time.Millisecond); err != nil {
 	log.Fatal(err)
 }
@@ -44,10 +44,34 @@ Convergence (strong eventual consistency), no lost updates, deterministic
 conflict resolution, thread-safety — and an explicit list of what is *not*
 promised — live in [docs/guarantees.md](docs/guarantees.md).
 
+## Testing your setup
+
+`simtest` runs a protocol core through a deterministic simulation of an
+adversarial network and judges the outcome with oracles. Generate scenarios
+from seeds, stress them, and shrink a failure to a minimal one:
+
+```go
+profile := simtest.Profile{
+	NodesMin: 2, NodesMax: 4, MaxOps: 12, MaxFaults: 4,
+	OpGen:      func(r *rand.Rand, _ int) string { return fmt.Sprintf("inc:%d", 1+r.IntN(5)) },
+	FaultKinds: []simtest.FaultKind{simtest.FaultDrop, simtest.FaultDelay, simtest.FaultDup, simtest.FaultPartition, simtest.FaultAckLost},
+	Interval: 5, Horizon: 40, Settle: 50,
+}
+oracles := []simtest.Oracle{simtest.Convergence(), simtest.CounterSum()}
+if failures := simtest.Stress(1, 1000, profile, subject, oracles...); len(failures) > 0 {
+	scenario, result := simtest.Shrink(failures[0].Scenario, subject, oracles...)
+	fmt.Println(scenario, result.Violations, result.Trace)
+}
+```
+
+`subject` builds your nodes: a sans-IO `artel.Core` per replica plus the way
+to apply an op and observe the state. To run a live engine under the same
+anomalies, wrap its transport: `simtest.Chaos(tr, seed, cfg)`. The package is
+experimental until 1.0.
+
 ## Roadmap to 1.0
 
-- Simulation & correctness harness: deterministic adversarial-network testing
-  as a public feature, not internal plumbing
+- Simulation & correctness harness — shipped in 0.2 as `simtest`
 - Target anti-entropy protocol: delta-intervals with causal consistency
 - Causal types: OR-Set, MV-Register, OR-Map, LWW-Register
 - Persistence
