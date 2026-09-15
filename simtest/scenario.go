@@ -54,6 +54,8 @@ type Profile struct {
 	Settle     Dur
 }
 
+// GenScenario draws a scenario from seed within the bounds of p. The same
+// seed and profile always yield the same scenario.
 func GenScenario(seed uint64, p Profile) Scenario {
 	for _, f := range p.FaultKinds {
 		if f == FaultAckLie {
@@ -138,6 +140,7 @@ func genRandomGroup(r *rand.Rand, nodes int) []int {
 	return out
 }
 
+// FullMesh returns the topology in which every node is a peer of every other.
 func FullMesh(nodes int) [][2]int {
 	ans := make([][2]int, 0, nodes*(nodes-1)/2)
 	for i := range nodes {

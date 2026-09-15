@@ -8,7 +8,7 @@ type Envelope struct {
 }
 
 // Core is the sans-IO protocol state machine: single-threaded, no clocks,
-// no goroutines. Shells (the production engine at v0.3, the simtest
+// no goroutines. Shells (a production engine later, the simtest
 // scheduler now) feed it events and execute the envelopes it returns.
 type Core interface {
 	Tick() []Envelope

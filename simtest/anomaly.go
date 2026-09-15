@@ -18,7 +18,7 @@ const (
 	// Legal under the delivery contract — every subject must survive it.
 	FaultAckLost FaultKind = "acklost"
 	// FaultAckLie reports success WITHOUT delivering — a transport that
-	// violates the delivery contract. Negative-space experiments only: it
+	// violates the delivery contract. For experiments only: it
 	// must never appear in generated profiles.
 	FaultAckLie FaultKind = "acklie"
 )

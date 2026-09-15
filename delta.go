@@ -19,20 +19,24 @@ type StateReplica[S any] interface {
 type DeltaReplica[S DeltaState[S]] interface {
 	StateReplica[S]
 
-	// Delta returns the accumulated delta-group to disseminate: the join of
-	// every delta-mutation applied since the last ResetDelta. It is an S, not a
-	// list — successive mutations are joined into it (Algorithm 1: Di = Di ⊔ d),
-	// so e.g. repeated increments collapse into a single entry.
+	// Delta returns the changes applied locally since the last FlushDelta,
+	// joined into one state rather than kept as a list: repeated increments,
+	// for instance, collapse into a single entry.
 	Delta() S
 
-	// FlushDelta returns the delta and clears the delta buffer to bottom after a successful send
-	// (Algorithm 1: Di = ⊥).
+	// FlushDelta returns those changes and starts collecting anew. The engine
+	// calls it once per gossip round.
 	FlushDelta() S
 }
 
+// DeltaState is the state of a delta-state CRDT: an element of a
+// join-semilattice, so a full state and any delta of it are the same type and
+// merge the same way.
 type DeltaState[S any] interface {
+	// Join merges two states into a new one. It is commutative, associative
+	// and idempotent, and leaves both arguments as they were.
 	Join(S) S
 
-	// IsBottom indicates whether the element is the bottom element of the join-semilattice
+	// IsBottom reports whether the state holds nothing at all.
 	IsBottom() bool
 }

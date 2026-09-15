@@ -5,6 +5,9 @@ import (
 	"sync"
 )
 
+// PNCounter is a counter that grows and shrinks: every replica counts its own
+// increments and decrements apart, and the value is their difference. It is
+// safe for concurrent use.
 type PNCounter struct {
 	id    string
 	state PNCounterState
@@ -12,11 +15,15 @@ type PNCounter struct {
 	mutex sync.Mutex
 }
 
+// PNCounterState is the state of a PNCounter, an increment and a decrement
+// count per replica; a delta is the same type holding only the replicas
+// that changed.
 type PNCounterState struct {
 	inc map[string]uint64
 	dec map[string]uint64
 }
 
+// IsBottom reports whether the state holds no counts.
 func (s PNCounterState) IsBottom() bool {
 	return len(s.inc) == 0 && len(s.dec) == 0
 }
@@ -46,6 +53,8 @@ func PNCounterJSON() Codec[PNCounterState] {
 var _ DeltaState[PNCounterState] = PNCounterState{}
 var _ DeltaReplica[PNCounterState] = (*PNCounter)(nil)
 
+// NewPNCounter returns an empty counter owned by the replica id. Every
+// replica needs its own id; a restarted replica should take a fresh one.
 func NewPNCounter(id string) *PNCounter {
 	return &PNCounter{
 		id: id,
@@ -60,6 +69,8 @@ func NewPNCounter(id string) *PNCounter {
 	}
 }
 
+// Join merges two states into a new one, taking the higher count per replica
+// on each side.
 func (s PNCounterState) Join(other PNCounterState) PNCounterState {
 	out := PNCounterState{
 		inc: make(map[string]uint64, len(s.inc)+len(other.inc)),
@@ -79,12 +90,14 @@ func (s PNCounterState) Join(other PNCounterState) PNCounterState {
 	return out
 }
 
+// Merge folds an incoming state or delta into the counter.
 func (p *PNCounter) Merge(other PNCounterState) {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 	p.state = p.state.Join(other)
 }
 
+// State returns a snapshot of the full state.
 func (p *PNCounter) State() PNCounterState {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
@@ -94,12 +107,15 @@ func (p *PNCounter) State() PNCounterState {
 	}
 }
 
+// Delta returns the changes made locally since the last FlushDelta.
 func (p *PNCounter) Delta() PNCounterState {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 	return p.delta // works assuming that delta is never mutated
 }
 
+// FlushDelta returns the changes made locally since the last call and starts
+// collecting anew.
 func (p *PNCounter) FlushDelta() PNCounterState {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
@@ -111,6 +127,7 @@ func (p *PNCounter) FlushDelta() PNCounterState {
 	return delta
 }
 
+// IncrementBy adds x to the counter.
 func (p *PNCounter) IncrementBy(x uint64) {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
@@ -122,10 +139,12 @@ func (p *PNCounter) IncrementBy(x uint64) {
 	}) // could do inline max but decided to make proper join of deltas
 }
 
+// Increment adds one to the counter.
 func (p *PNCounter) Increment() {
 	p.IncrementBy(1)
 }
 
+// DecrementBy subtracts x from the counter.
 func (p *PNCounter) DecrementBy(x uint64) {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
@@ -137,10 +156,13 @@ func (p *PNCounter) DecrementBy(x uint64) {
 	}) // could do inline max but decided to make proper join of deltas
 }
 
+// Decrement subtracts one from the counter.
 func (p *PNCounter) Decrement() {
 	p.DecrementBy(1)
 }
 
+// Value returns the increments minus the decrements seen so far, over every
+// replica.
 func (p *PNCounter) Value() (sum int64) {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()

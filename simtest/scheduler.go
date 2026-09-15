@@ -9,6 +9,8 @@ import (
 	"github.com/kudesn1k1/artel"
 )
 
+// Result is what Run returns: the trace, one observation per node taken
+// after the run, and every violation the oracles reported.
 type Result struct {
 	Trace      Trace
 	Final      []Observation

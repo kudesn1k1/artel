@@ -16,10 +16,9 @@ import (
 	"github.com/kudesn1k1/artel"
 )
 
-// HTTP is a Transport over the real network: each node runs a tiny HTTP server
-// and POSTs gossip messages to its peers' /gossip endpoints. The Message
-// envelope is JSON (its Payload []byte rides as base64) — readable in the demo
-// logs, and swappable for a compact codec later without the engine noticing.
+// HTTP is a Transport over the real network: each node runs a small HTTP
+// server and POSTs gossip messages to its peers' /gossip endpoints. The
+// message envelope is JSON, with the payload as base64.
 type HTTP struct {
 	id     string
 	addr   string            // listen address, e.g. ":8001"
@@ -31,6 +30,8 @@ type HTTP struct {
 
 var _ artel.Transport = (*HTTP)(nil)
 
+// NewHTTP returns the transport for node id, listening on addr and gossiping
+// to peers, a map from peer id to base URL.
 func NewHTTP(id, addr string, peers map[string]string) *HTTP {
 	return &HTTP{
 		id:     id,

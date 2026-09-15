@@ -18,9 +18,8 @@ const (
 	EventObserve    EventKind = "observe"
 )
 
-// Event is one applied step. Field order is canonical: encoding/json marshals
-// struct fields in declaration order, so the serialized stream is
-// deterministic by construction (serialization lands with the JSONL writer).
+// Event is one applied step. Fields are declared in their canonical order,
+// which is the order they take on the wire.
 //
 // Seq is the ordinal of the event in the trace (0-based, monotone) — a
 // stable identity that does not leak scheduler internals.
@@ -52,7 +51,7 @@ type Event struct {
 }
 
 // Trace is the append-only log of one run: the replay artifact, the oracle
-// input and the future timeline export are all this one object.
+// input and the timeline export are all this one object.
 type Trace struct {
 	Events []Event
 }
@@ -65,7 +64,7 @@ func (t *Trace) add(e Event) int {
 
 // History distils the trace for oracles: the nodes (one observe row each),
 // the accepted ops and every delivery with its send link. Crashed is empty —
-// the DES has no crash events yet.
+// the simulator has no crashes; a history built by hand names them.
 func (t Trace) History() History {
 	nodesMap := make(map[string]struct{})
 	ops := make([]Op, 0, len(t.Events))
@@ -94,6 +93,6 @@ func (t Trace) History() History {
 		Nodes:      nodes,
 		Ops:        ops,
 		Deliveries: dels,
-		Crashed:    nil, // TODO: set crashed nodes, empty in v0.2
+		Crashed:    nil, // the simulator has no crashes; a history built by hand names them
 	}
 }

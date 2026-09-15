@@ -18,6 +18,7 @@ type InProcessRegistry struct {
 	handlers map[string]artel.Handler
 }
 
+// NewInProcessRegistry returns an empty switchboard.
 func NewInProcessRegistry() *InProcessRegistry {
 	return &InProcessRegistry{handlers: make(map[string]artel.Handler)}
 }
@@ -49,6 +50,8 @@ type InProcess struct {
 
 var _ artel.Transport = (*InProcess)(nil)
 
+// NewInProcess returns the transport for node id, gossiping to peers over
+// reg.
 func NewInProcess(id string, peers []string, reg *InProcessRegistry) *InProcess {
 	return &InProcess{id: id, peers: peers, reg: reg}
 }

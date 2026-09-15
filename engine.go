@@ -18,6 +18,11 @@ type pullJob = string
 
 const workerCount = 8
 
+// Engine runs anti-entropy gossip for one replica: every interval it ships
+// the replica's fresh delta to each peer, merges what peers send, and pulls
+// a full state from every peer when it starts, so a new or restarted node
+// catches up. A push that fails is kept and sent again. The replica stays
+// usable throughout; the engine only reads its delta and merges into it.
 type Engine[S DeltaState[S], R DeltaReplica[S]] struct {
 	local       R
 	transport   Transport
@@ -35,6 +40,8 @@ type Engine[S DeltaState[S], R DeltaReplica[S]] struct {
 	stopOnce    sync.Once
 }
 
+// NewEngine wires a replica to a transport, with codec turning states into
+// the bytes on the wire. Nothing runs until Start.
 func NewEngine[S DeltaState[S], R DeltaReplica[S]](local R, transport Transport, codec Codec[S]) *Engine[S, R] {
 	transportPeers := transport.Peers()
 	peers := make(map[string]*peerOutbox[S], len(transportPeers))
